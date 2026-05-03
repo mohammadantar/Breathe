@@ -1,0 +1,24 @@
+steps:
+  # Step 1: Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '-t'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/breathe-repo/breathe-app:$COMMIT_SHA'
+      - '-t'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/breathe-repo/breathe-app:latest'
+      - '.'
+
+  # Step 2: Push the image to Google Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'push'
+      - 'europe-west1-docker.pkg.dev/$PROJECT_ID/breathe-repo/breathe-app'
+      - '--all-tags'
+
+images:
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/breathe-repo/breathe-app:$COMMIT_SHA'
+  - 'europe-west1-docker.pkg.dev/$PROJECT_ID/breathe-repo/breathe-app:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

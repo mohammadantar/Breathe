@@ -1,0 +1,22 @@
+{
+  "name": "breathe-app",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy-start": "serve -s dist -l tcp://0.0.0.0:8080"
+  },
+  "dependencies": {
+    "@google-cloud/vertexai": "^1.12.0",
+    "@google/genai": "^1.51.0",
+    "@google/generative-ai": "^0.24.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "serve": "^14.2.1"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
