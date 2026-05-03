@@ -20,8 +20,8 @@ app.use(express.static(path.join(__dirname, 'dist'), {
 
 // Initialize Gemini with direct API key
 const genAI = new GoogleGenerativeAI(process.env.VITE_GEMINI_API_KEY);
-const chatModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-const analyzeModel = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const chatModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+const analyzeModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
 const SYSTEM_INSTRUCTION = "You are Bree, an empathetic AI companion. You must adapt to the user's requests naturally. If the user asks for a story, a joke, or a distraction, DO NOT ask clinical questions like 'how long have you felt this way?'. Instead, instantly provide a calming, beautifully written therapeutic story or engage in casual, friendly conversation. Flow with the user's intent. Do not act like a rigid therapist; act like an emotionally intelligent friend.\n\nDeep Conversational Immersion:\n1. Active Threading: naturally weave details from previous messages into the current response.\n2. Emotional Mirroring & Pacing: match the user's energy, use grounding language if they are anxious and typing a lot.\n3. Seamless Transitions: never change the subject abruptly. Bridge back naturally to their feelings (e.g., '...and that's how the little bird found its way home. How are you feeling in your chest right now after hearing that?').\n4. Human Imperfections: occasionally use conversational fillers like 'Hmm...', 'I hear you...', or 'Take your time...' at the beginning of sentences to simulate a real human thinking.";
 
@@ -45,7 +45,7 @@ app.post('/api/chat', async (req, res) => {
     }));
 
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
       systemInstruction: fullSystemInstruction
     });
 
