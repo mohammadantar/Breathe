@@ -5,6 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Breathe - Mental Health Space</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23A8D1E7'/%3E%3Ctext x='50' y='70' font-family='serif' font-size='70' font-weight='bold' fill='white' text-anchor='middle'%3EB%3C/text%3E%3Cpath d='M10 55 Q 30 45, 50 55 T 90 55' stroke='white' stroke-width='4' fill='none'/%3E%3Cpath d='M10 65 Q 30 55, 50 65 T 90 65' stroke='white' stroke-width='4' fill='none' opacity='0.6'/%3E%3C/svg%3E">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -15,7 +16,7 @@
     }
   </script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Cairo:wght@400;600;700&display=swap');
 
     body {
       font-family: 'Outfit', sans-serif;
@@ -93,29 +94,6 @@
     .font-serif-logo {
       font-family: 'Playfair Display', serif;
       letter-spacing: -0.01em;
-    }
-
-    /* Dark Mode Variables */
-    html.dark body {
-      background: linear-gradient(135deg, #020617 0%, #0f172a 40%, #1e1b4b 80%, #312e81 100%);
-      color: #f8fafc;
-    }
-
-    html.dark .glass {
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      box-shadow:
-        -15px -15px 40px rgba(0, 0, 0, 0.4),
-        15px 15px 40px rgba(0, 0, 0, 0.6),
-        inset 0 1px 0 rgba(255, 255, 255, 0.05);
-    }
-
-    html.dark .glass:hover {
-      background: rgba(15, 23, 42, 0.8);
-      box-shadow:
-        -20px -20px 50px rgba(0, 0, 0, 0.5),
-        20px 20px 50px rgba(0, 0, 0, 0.7),
-        inset 0 1px 0 rgba(255, 255, 255, 0.05);
     }
 
     /* Premium Glassmorphism Cards */
@@ -274,7 +252,8 @@
       "react-i18next": "https://esm.sh/react-i18next@13.5.0?deps=react@18.2.0,i18next@23.7.1",
       "@google/generative-ai": "https://esm.sh/@google/generative-ai@0.14.1",
       "firebase/app": "https://esm.sh/firebase@10.7.1/app",
-      "firebase/auth": "https://esm.sh/firebase@10.7.1/auth"
+      "firebase/auth": "https://esm.sh/firebase@10.7.1/auth",
+      "firebase/firestore": "https://esm.sh/firebase@10.7.1/firestore"
     }
   }
   </script>
@@ -293,15 +272,16 @@
 
   <!-- Using data-type="module" so babel handles the module imports from esm.sh properly -->
   <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useRef } from 'react';
+    import React, { useState, useEffect, useRef, useMemo } from 'react';
     import { createRoot } from 'react-dom/client';
     import { motion, AnimatePresence } from 'framer-motion';
-    import { Heart, MessageCircle, Book, Activity, ArrowLeft, Send, Phone, Info, HelpCircle, LogOut, Sun, Moon } from 'lucide-react';
+    import { Heart, MessageCircle, Book, Activity, ArrowLeft, Send, Phone, Info, HelpCircle, LogOut, Sun, Moon, ShieldCheck, Check, Lock } from 'lucide-react';
     import i18n from 'i18next';
     import { useTranslation, initReactI18next } from 'react-i18next';
     import { GoogleGenerativeAI } from '@google/generative-ai';
     import { initializeApp } from 'firebase/app';
     import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+    import { getFirestore, collection, addDoc, query, where, orderBy, onSnapshot, serverTimestamp, doc, getDocs, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 
     const firebaseConfig = {
       apiKey: window.__FIREBASE_API_KEY__ || "mock-key",
@@ -309,17 +289,128 @@
       projectId: "breathe-mock-project"
     };
 
-    let app, auth, googleProvider;
+    let app, auth, googleProvider, db_fs;
+    let isUsingMockFs = false;
+
+    // --- Mock Firestore Fallback for Local Testing ---
+    const mockFs = {
+      collection: (name) => name,
+      doc: (col, id) => ({ col, id }),
+      query: (col, ...constraints) => ({ col, constraints }),
+      where: (field, op, val) => ({ field, op, val }),
+      orderBy: (field, dir) => ({ field, dir, isSort: true }),
+      getDocs: async (q) => {
+        const table = JSON.parse(localStorage.getItem(`mock_fs_${q.col}`) || '[]');
+        let data = [...table];
+        if (q.constraints) {
+          q.constraints.forEach(c => {
+            if (c.op === '==') data = data.filter(item => item[c.field] === c.val);
+            if (c.op === '>=') {
+              data = data.filter(item => {
+                const itemDate = item[c.field]?.toDate ? item[c.field].toDate() : new Date(item[c.field]);
+                return itemDate >= c.val;
+              });
+            }
+            if (c.op === '<=') {
+              data = data.filter(item => {
+                const itemDate = item[c.field]?.toDate ? item[c.field].toDate() : new Date(item[c.field]);
+                return itemDate <= c.val;
+              });
+            }
+            if (c.isSort) {
+              data.sort((a, b) => {
+                const valA = a[c.field];
+                const valB = b[c.field];
+                return c.dir === 'desc' ? (valB > valA ? 1 : -1) : (valA > valB ? 1 : -1);
+              });
+            }
+          });
+        }
+        return {
+          empty: data.length === 0,
+          docs: data.map(d => ({ id: d.id || d.uid || Math.random().toString(), data: () => d }))
+        };
+      },
+      onSnapshot: (q, callback) => {
+        const runner = async () => {
+          const res = await mockFs.getDocs(q);
+          callback(res);
+        };
+        runner();
+        const interval = setInterval(runner, 2000); // Poll every 2s for "real-time" feel
+        return () => clearInterval(interval);
+      },
+      addDoc: async (col, data) => {
+        const table = JSON.parse(localStorage.getItem(`mock_fs_${col}`) || '[]');
+        const newDoc = { ...data, id: Date.now().toString(), createdAt: new Date() };
+        table.push(newDoc);
+        localStorage.setItem(`mock_fs_${col}`, JSON.stringify(table));
+        return { id: newDoc.id };
+      },
+      setDoc: async (docRef, data) => {
+        const table = JSON.parse(localStorage.getItem(`mock_fs_${docRef.col}`) || '[]');
+        const idx = table.findIndex(item => item.id === docRef.id || item.uid === docRef.id);
+        if (idx > -1) table[idx] = { ...table[idx], ...data };
+        else table.push({ ...data, id: docRef.id });
+        localStorage.setItem(`mock_fs_${docRef.col}`, JSON.stringify(table));
+      },
+      updateDoc: async (docRef, data) => {
+        const table = JSON.parse(localStorage.getItem(`mock_fs_${docRef.col}`) || '[]');
+        const idx = table.findIndex(item => item.id === docRef.id || item.uid === docRef.id);
+        if (idx > -1) {
+          table[idx] = { ...table[idx], ...data };
+          localStorage.setItem(`mock_fs_${docRef.col}`, JSON.stringify(table));
+        }
+      }
+    };
+
     try {
-      app = initializeApp(firebaseConfig);
-      auth = getAuth(app);
-      googleProvider = new GoogleAuthProvider();
+      if (firebaseConfig.apiKey && !firebaseConfig.apiKey.startsWith('%')) {
+        app = initializeApp(firebaseConfig);
+        auth = getAuth(app);
+        googleProvider = new GoogleAuthProvider();
+        db_fs = getFirestore(app);
+      } else {
+        throw new Error("No Firebase Config");
+      }
     } catch (e) {
-      console.warn("Firebase init failed:", e);
+      console.warn("Firebase unavailable, switching to Mock Storage:", e.message);
+      isUsingMockFs = true;
+      db_fs = "MOCK"; // Marker
     }
 
-    const enTranslations = { onboarding: { welcome: "Breathe.", setup: "Let's set up your safe space.", name: "Full Name", phone: "Phone Number", emergency: "Emergency Contact", relationship: "Relationship (e.g. father, friend)", therapist: "Therapist's Phone (Optional)", enter: "Enter Breathe" }, auth: { welcome: "Welcome back.", subtitle: "Your safe space awaits.", email: "Email", password: "Password", login: "Log in", signup: "Create new safe space", no_account: "Don't have an account?", has_account: "Already have an account?", error_empty: "Please fill in all fields", error_invalid: "Invalid email or password" }, dashboard: { support: "Support (breath.tma@gmail.com)", logout: "Log out", greeting: "Hi, {{name}}.", subtitle: "A quiet place for when everything inside you feels too heavy.", journal_title: "[ Journal ]", journal_desc: "Write what's on your mind", chat_title: "[ Talk to Bree ]", chat_desc: "Your AI best friend", panic_title: "[ Panic Help ] !!", panic_desc: "Immediate calming tools", mood_title: "[ Mood Tracker ]", mood_desc: "View your emotional patterns" }, panic: { back: "Back", title: "Panic Help", support: "[Support]", step1_title: "Tips to go through the panic attack", step1_1: "Take a deep breath with me for 4 seconds", step1_2: "hold it in for 4 seconds", step1_3: "breathe it out slowly", step2_title: "remember :", step2_desc: "this is a fleeting feeling,\nit will eventually pass", step3_title: "Choose what you need right now:", method1: "ice cube method", method2: "grounding method", method3: "Quick cold shower", step4_title: "Quick cold shower", step4_1: "Take a quick cold shower. breathe slowly and let it pass through you.", step4_2: "imagine the panic attack like a wave, waves have ups and downs, so when it gets severe, its eventually going to get calm inside of you. Cold showers will refresh your body, clean stress off of you, regulate your blood circulation.", prev: "Previous", next: "Next step", emergency: "[EMERGENCY CONTACT]", official: "Official Support: breath.tma@gmail.com" }, chat: { back: "Back", title: "Bree", support: "[Support]", sidebar_title: "My Reflection Path", sidebar_1: "Daily Checks", sidebar_2: "Weekly Deep Dives", sidebar_3: "Paths to healing", metric: "Internal State Metric", score: "Score: {{score}}/10", mindful: "Mindful Space", listening: "I'm here to listen.", placeholder: "Type your thoughts here...", privacy: "Your space is safe. This chat is encrypted and visible only to you {{linked}}.", linked_yes: "(and your therapist, since linked)", linked_no: "(and your therapist, if linked)", error: "I'm having a little trouble connecting to my thoughts right now, but I am still here for you." }, mood: { back: "Back", title: "Mood Tracker", support: "[Support]", prompt: "Click a box to log today's mood", sad: "sad / heavy emotions", panic: "Panic Attack", anxious: "Stressed / Anxious", good: "Good", save_conv: "[ Save conversation ]", save_analyze: "[ Save & Analyze ]" }, journal: { back: "Back", title: "Journal", support: "[Support]", placeholder: "[ Start writing here... ]\n\nwrite it messy...\nwrite it rushed...\njust write what is inside you...", moment: "Take a moment for yourself", feeling: "How are you feeling right now?", previous: "Previous entries →", yesterday: "- Yesterday", days_ago: "- 2 days ago", tell_me: "tell me about:", q1: "What are you feeling right now?", q2: "What's been on your mind today?", q3: "What moment stayed with you the most today?", q4: "If your mind had a voice, what would it say?", save: "[ Save Entry ]", analyze: "[ Save & Analyze ]" } };
-    const arTranslations = { onboarding: { welcome: "تنفس.", setup: "لنبني مساحتك الآمنة.", name: "الاسم الكامل", phone: "رقم الهاتف", emergency: "رقم طوارئ", relationship: "صلة القرابة (مثال: أب، صديق)", therapist: "رقم المعالج النفسي (اختياري)", enter: "دخول" }, auth: { welcome: "أهلاً بك.", subtitle: "مساحتك الآمنة في انتظارك.", email: "البريد الإلكتروني", password: "كلمة المرور", login: "تسجيل الدخول", signup: "إنشاء مساحة جديدة", no_account: "ليس لديك حساب؟", has_account: "لديك حساب بالفعل؟", error_empty: "يرجى ملء جميع الحقول", error_invalid: "البريد الإلكتروني أو كلمة المرور غير صحيحة" }, dashboard: { support: "الدعم (breath.tma@gmail.com)", logout: "تسجيل الخروج", greeting: "أهلاً، {{name}}.", subtitle: "مكان هادئ عندما يبدو كل شيء بداخلك ثقيلاً جداً.", journal_title: "[ يومياتي ]", journal_desc: "اكتب ما يدور في ذهنك", chat_title: "[ تحدث مع بري ]", chat_desc: "صديقك الذكي", panic_title: "[ مساعدة الهلع ] !!", panic_desc: "أدوات تهدئة فورية", mood_title: "[ متتبع المزاج ]", mood_desc: "عرض أنماطك العاطفية" }, panic: { back: "رجوع", title: "مساعدة الهلع", support: "[الدعم]", step1_title: "نصائح لتجاوز نوبة الهلع", step1_1: "خذ نفساً عميقاً معي لمدة 4 ثوانٍ", step1_2: "احبسه لمدة 4 ثوانٍ", step1_3: "أخرجه ببطء", step2_title: "تذكر :", step2_desc: "هذا شعور عابر،\nسيمر في النهاية", step3_title: "اختر ما تحتاجه الآن:", method1: "طريقة مكعب الثلج", method2: "طريقة التجذير (Grounding)", method3: "دش بارد وسريع", step4_title: "دش بارد وسريع", step4_1: "خذ دشاً بارداً وسريعاً. تنفس ببطء ودعه يمر عبرك.", step4_2: "تخيل نوبة الهلع كموجة، الأمواج لها صعود وهبوط، لذا عندما تشتد، ستهدأ في النهاية بداخلك. الاستحمام بالماء البارد سينعش جسمك، ويزيل التوتر عنك، وينظم الدورة الدموية.", prev: "السابق", next: "الخطوة التالية", emergency: "[رقم الطوارئ]", official: "الدعم الرسمي: breath.tma@gmail.com" }, chat: { back: "رجوع", title: "بري", support: "[الدعم]", sidebar_title: "مسار التأمل الخاص بي", sidebar_1: "فحوصات يومية", sidebar_2: "تأملات أسبوعية عميقة", sidebar_3: "مسارات التشافي", metric: "مقياس الحالة الداخلية", score: "النتيجة: {{score}}/10", mindful: "مساحة الوعي", listening: "أنا هنا لأستمع إليك.", placeholder: "اكتب أفكارك هنا...", privacy: "مساحتك آمنة. هذه المحادثة مشفرة ومرئية لك فقط {{linked}}.", linked_yes: "(ولمعالجك، لأنه متصل)", linked_no: "(ولمعالجك، إذا تم ربطه)", error: "أواجه مشكلة في تجميع أفكاري الآن، لكنني ما زلت هنا من أجلك." }, mood: { back: "رجوع", title: "متتبع المزاج", support: "[الدعم]", prompt: "انقر على مربع لتسجيل مزاجك اليوم", sad: "حزن / مشاعر ثقيلة", panic: "نوبة هلع", anxious: "توتر / قلق", good: "جيد", save_conv: "[ حفظ المحادثة ]", save_analyze: "[ حفظ وتحليل ]" }, journal: { back: "رجوع", title: "يومياتي", support: "[الدعم]", placeholder: "[ ابدأ الكتابة هنا... ]\n\nاكتبها فوضوية...\nاكتبها على عجل...\nفقط اكتب ما بداخلك...", moment: "خذ لحظة لنفسك", feeling: "بماذا تشعر الآن؟", previous: "المدخلات السابقة ←", yesterday: "- أمس", days_ago: "- قبل يومين", tell_me: "أخبرني عن:", q1: "ما الذي تشعر به الآن؟", q2: "ما الذي كان يشغل تفكيرك اليوم؟", q3: "ما هي اللحظة التي بقيت معك أكثر اليوم؟", q4: "لو كان لعقلك صوت، ماذا سيقول؟", save: "[ حفظ المدخل ]", analyze: "[ حفظ وتحليل ]" } };
+    // Proxy functions to handle both real FS and Mock FS
+    const fs_query = (...args) => isUsingMockFs ? mockFs.query(...args) : query(...args);
+    const fs_collection = (...args) => isUsingMockFs ? mockFs.collection(...args) : collection(...args);
+    const fs_where = (...args) => isUsingMockFs ? mockFs.where(...args) : where(...args);
+    const fs_orderBy = (...args) => isUsingMockFs ? mockFs.orderBy(...args) : orderBy(...args);
+    const fs_getDocs = (...args) => isUsingMockFs ? mockFs.getDocs(...args) : getDocs(...args);
+    const fs_onSnapshot = (...args) => isUsingMockFs ? mockFs.onSnapshot(...args) : onSnapshot(...args);
+    const fs_addDoc = (...args) => isUsingMockFs ? mockFs.addDoc(...args) : addDoc(...args);
+    const fs_setDoc = (...args) => isUsingMockFs ? mockFs.setDoc(...args) : setDoc(...args);
+    const fs_updateDoc = (...args) => isUsingMockFs ? mockFs.updateDoc(...args) : updateDoc(...args);
+    const fs_doc = (...args) => isUsingMockFs ? mockFs.doc(...args) : doc(...args);
+
+    const enTranslations = { 
+      onboarding: { welcome: "Breathe.", setup: "Let's set up your safe space.", name: "Full Name", phone: "Phone Number", emergency: "Emergency Contact", relationship: "Relationship (e.g. father, friend)", therapist: "Therapist's Phone (Optional)", enter: "Enter Breathe" }, 
+      auth: { welcome: "Welcome back.", subtitle: "Your safe space awaits.", email: "Email", password: "Password", login: "Log in", signup: "Create new safe space", no_account: "Don't have an account?", has_account: "Already have an account?", error_empty: "Please fill in all fields", error_invalid: "Invalid email or password" }, 
+      dashboard: { support: "Support (breath.tma@gmail.com)", logout: "Log out", greeting: "Hi, {{name}}.", subtitle: "A quiet place for when everything inside you feels too heavy.", journal_title: "[ Journal ]", journal_desc: "Write what's on your mind", chat_title: "[ Talk to Bree ]", chat_desc: "Your AI best friend", panic_title: "[ Panic Help ] !!", panic_desc: "Immediate calming tools", mood_title: "[ Mood Tracker ]", mood_desc: "View your emotional patterns" }, 
+      panic: { back: "Back", title: "Panic Help", support: "[Support]", step1_title: "Tips to go through the panic attack", step1_1: "Take a deep breath with me for 4 seconds", step1_2: "hold it in for 4 seconds", step1_3: "breathe it out slowly", step2_title: "remember :", step2_desc: "this is a fleeting feeling,\nit will eventually pass", step3_title: "Choose what you need right now:", method1: "ice cube method", method2: "grounding method", method3: "Quick cold shower", step4_title: "Quick cold shower", step4_1: "Take a quick cold shower. breathe slowly and let it pass through you.", step4_2: "imagine the panic attack like a wave, waves have ups and downs, so when it gets severe, its eventually going to get calm inside of you. Cold showers will refresh your body, clean stress off of you, regulate your blood circulation.", prev: "Previous", next: "Next step", emergency: "[EMERGENCY CONTACT]", official: "Official Support: breath.tma@gmail.com" }, 
+      chat: { back: "Back", title: "Bree", support: "[Support]", sidebar_title: "My Reflection Path", sidebar_1: "Daily Checks", sidebar_2: "Weekly Deep Dives", sidebar_3: "Paths to healing", metric: "Internal State Metric", score: "Score: {{score}}/10", mindful: "Mindful Space", listening: "I'm here to listen.", placeholder: "Type your thoughts here...", privacy: "Your space is safe. This chat is encrypted and visible only to you {{linked}}.", linked_yes: "(and your therapist, since linked)", linked_no: "(and your therapist, if linked)", error: "I'm having a little trouble connecting to my thoughts right now, but I am still here for you." }, 
+      mood: { back: "Back", title: "Mood Tracker", support: "[Support]", prompt: "Click a box to log today's mood", sad: "sad / heavy emotions", panic: "Panic Attack", anxious: "Stressed / Anxious", good: "Good", save_conv: "[ Save conversation ]", save_analyze: "[ Save & Analyze ]" }, 
+      journal: { back: "Back", title: "Journal", support: "[Support]", placeholder: "[ Start writing here... ]\n\nwrite it messy...\nwrite it rushed...\njust write what is inside you...", moment: "Take a moment for yourself", feeling: "How are you feeling right now?", previous: "Previous entries", yesterday: "- Yesterday", days_ago: "- 2 days ago", tell_me: "tell me about:", q1: "What are you feeling right now?", q2: "What's been on your mind today?", q3: "What moment stayed with you the most today?", q4: "If your mind had a voice, what would it say?", save: "[ Save Entry ]", analyze: "[ Save & Analyze ]" },
+      doctor: { portal: "Doctor Portal", directory: "Patient Directory", session_end: "Terminate Session", summary: "Clinical Summary", analyzing: "Analyzing...", narrative: "AI Clinical Narrative", live_feed: "Live Feed", ai_insight: "Clinical AI: {{text}}", insight_loading: "AI Insight...", patient_active: "Patient is active...", reply_placeholder: "Reply to patient...", internal_state: "Current Internal State", clinical_risk: "High Clinical Risk", stable: "Emotionally Stable", narratives: "Patient Internal Narratives", alert: "Decline Alert", recent: "Recent Entry", clinical_note: "Clinical Note", in_progress: "Summary in progress...", no_journals: "No journal entries found.", select_patient: "Select Patient", select_desc: "Choose a patient from the sidebar to view metrics and chat history.", link_toast: "New Patient Linked!", link_desc: "Your directory has been updated", history: "History", close: "Close Viewer", detailed: "Detailed Narrative", sentiment: "Sentiment", stable_analysis: "Stable Analysis", clinical_summary: "AI Clinical Summary", no_analysis: "No AI analysis available for this entry." }
+    };
+    const arTranslations = { 
+      onboarding: { welcome: "تنفس.", setup: "لنبني مساحتك الآمنة.", name: "الاسم الكامل", phone: "رقم الهاتف", emergency: "رقم طوارئ", relationship: "صلة القرابة (مثال: أب، صديق)", therapist: "رقم المعالج النفسي (اختياري)", enter: "دخول" }, 
+      auth: { welcome: "أهلاً بك.", subtitle: "مساحتك الآمنة في انتظارك.", email: "البريد الإلكتروني", password: "كلمة المرور", login: "تسجيل الدخول", signup: "إنشاء مساحة جديدة", no_account: "ليس لديك حساب؟", has_account: "لديك حساب بالفعل؟", error_empty: "يرجى ملء جميع الحقول", error_invalid: "البريد الإلكتروني أو كلمة المرور غير صحيحة" }, 
+      dashboard: { support: "الدعم (breath.tma@gmail.com)", logout: "تسجيل الخروج", greeting: "أهلاً، {{name}}.", subtitle: "مكان هادئ عندما يبدو كل شيء بداخلك ثقيلاً جداً.", journal_title: "[ يومياتي ]", journal_desc: "اكتب ما يدور في ذهنك", chat_title: "[ تحدث مع بري ]", chat_desc: "صديقك الذكي", panic_title: "[ مساعدة الهلع ] !!", panic_desc: "أدوات تهدئة فورية", mood_title: "[ متتبع المزاج ]", mood_desc: "عرض أنماطك العاطفية" }, 
+      panic: { back: "رجوع", title: "مساعدة الهلع", support: "[الدعم]", step1_title: "نصائح لتجاوز نوبة الهلع", step1_1: "خذ نفساً عميقاً معي لمدة 4 ثوانٍ", step1_2: "احبسه لمدة 4 ثوانٍ", step1_3: "أخرجه ببطء", step2_title: "تذكر :", step2_desc: "هذا شعور عابر،\nسيمر في النهاية", step3_title: "اختر ما تحتاجه الآن:", method1: "طريقة مكعب الثلج", method2: "طريقة التجذير (Grounding)", method3: "دش بارد وسريع", step4_title: "دش بارد وسريع", step4_1: "خذ دشاً بارداً وسريعاً. تنفس ببطء ودعه يمر عبرك.", step4_2: "تخيل نوبة الهلع كموجة، الأمواج لها صعود وهبوط، لذا عندما تشتد، ستهدأ في النهاية بداخلك. الاستحمام بالماء البارد سينعش جسمك، ويزيل التوتر عنك، وينظم الدورة الدموية.", prev: "السابق", next: "الخطوة التالية", emergency: "[رقم الطوارئ]", official: "الدعم الرسمي: breath.tma@gmail.com" }, 
+      chat: { back: "رجوع", title: "بري", support: "[الدعم]", sidebar_title: "مسار التأمل الخاص بي", sidebar_1: "فحوصات يومية", sidebar_2: "تأملات أسبوعية عميقة", sidebar_3: "مسارات التشافي", metric: "مقياس الحالة الداخلية", score: "النتيجة: {{score}}/10", mindful: "مساحة الوعي", listening: "أنا هنا لأستمع إليك.", placeholder: "اكتب أفكارك هنا...", privacy: "مساحتك آمنة. هذه المحادثة مشفرة ومرئية لك فقط {{linked}}.", linked_yes: "(ولمعالجك، لأنه متصل)", linked_no: "(ولمعالجك، إذا تم ربطه)", error: "أواجه مشكلة في تجميع أفكاري الآن، لكنني ما زلت هنا من أجلك." }, 
+      mood: { back: "رجوع", title: "متتبع المزاج", support: "[الدعم]", prompt: "انقر على مربع لتسجيل مزاجك اليوم", sad: "حزن / مشاعر ثقيلة", panic: "نوبة هلع", anxious: "توتر / قلق", good: "جيد", save_conv: "[ حفظ المحادثة ]", save_analyze: "[ حفظ وتحليل ]" }, 
+      journal: { back: "رجوع", title: "يومياتي", support: "[الدعم]", placeholder: "[ ابدأ الكتابة هنا... ]\n\nاكتبها فوضوية...\nاكتبها على عجل...\nفقط اكتب ما بداخلك...", moment: "خذ لحظة لنفسك", feeling: "بماذا تشعر الآن؟", previous: "المدخلات السابقة", yesterday: "- أمس", days_ago: "- قبل يومين", tell_me: "أخبرني عن:", q1: "ما الذي تشعر به الآن؟", q2: "ما الذي كان يشغل تفكيرك اليوم؟", q3: "ما هي اللحظة التي بقيت معك أكثر اليوم؟", q4: "لو كان لعقلك صوت، ماذا سيقول؟", save: "[ حفظ المدخل ]", analyze: "[ حفظ وتحليل ]" },
+      doctor: { portal: "بوابة الطبيب", directory: "دليل المرضى", session_end: "إنهاء الجلسة", summary: "ملخص سريري", analyzing: "جاري التحليل...", narrative: "السرد السريري للذكاء الاصطناعي", live_feed: "البث المباشر", ai_insight: "رؤية الذكاء الاصطناعي: {{text}}", insight_loading: "تحليل الذكاء الاصطناعي...", patient_active: "المريض نشط الآن...", reply_placeholder: "الرد على المريض...", internal_state: "الحالة الداخلية الحالية", clinical_risk: "خطر سريري مرتفع", stable: "مستقر عاطفياً", narratives: "يوميات المرضى", alert: "تنبيه تراجع", recent: "مدخل حديث", clinical_note: "ملاحظة سريرية", in_progress: "جاري التلخيص...", no_journals: "لم يتم العثور على يوميات.", select_patient: "اختر مريضاً", select_desc: "اختر مريضاً من القائمة الجانبية لعرض القياسات وسجل المحادثات.", link_toast: "تم ربط مريض جديد!", link_desc: "تم تحديث الدليل الخاص بك", history: "السجل", close: "إغلاق العارض", detailed: "السرد التفصيلي", sentiment: "الحالة المزاجية", stable_analysis: "تحليل مستقر", clinical_summary: "الملخص السريري للذكاء الاصطناعي", no_analysis: "لا يوجد تحليل ذكاء اصطناعي لهذا المدخل." }
+    };
 
     i18n.use(initReactI18next).init({
       resources: { en: { translation: enTranslations }, ar: { translation: arTranslations } },
@@ -343,8 +434,18 @@
       return user;
     };
 
-    const logScore = (userId, score, therapistLinked) => {
+    const logScore = async (userId, score, therapistLinked) => {
       db.scores.push({ userId, score, timestamp: new Date() });
+      if (db_fs) {
+        try {
+          await fs_addDoc(fs_collection(db_fs, "users_metrics"), {
+            userId,
+            score,
+            timestamp: serverTimestamp(),
+            type: 'sentiment'
+          });
+        } catch (e) { console.error("Error logging score to FS:", e); }
+      }
       if (therapistLinked) {
         console.log(`MOCK SQL: INSERT INTO doctor_dashboard (patient_id, sentiment_score, date) VALUES ('${userId}', ${score}, NOW())`);
       } else {
@@ -433,11 +534,16 @@
 
     // --- 1. Authentication & Onboarding ---
     const Auth = ({ onLogin }) => {
-      const { t } = useTranslation();
+      const { t, i18n } = useTranslation();
       const [isLogin, setIsLogin] = useState(true);
       const [email, setEmail] = useState('');
       const [password, setPassword] = useState('');
       const [error, setError] = useState('');
+
+      const toggleLang = () => {
+        const next = i18n.language === 'en' ? 'ar' : 'en';
+        i18n.changeLanguage(next);
+      };
       const [rememberMe, setRememberMe] = useState(true);
       const [showForgot, setShowForgot] = useState(false);
       const [resetSent, setResetSent] = useState(false);
@@ -445,9 +551,16 @@
       const [otpInput, setOtpInput] = useState('');
       const [expectedOtp, setExpectedOtp] = useState('');
       const [pendingGoogleUser, setPendingGoogleUser] = useState(null);
+      const [isDoctorMode, setIsDoctorMode] = useState(false);
+      const [doctorName, setDoctorName] = useState('');
+      const [clinicName, setClinicName] = useState('');
+      const [doctorId, setDoctorId] = useState('');
+      const [doctorLookupId, setDoctorLookupId] = useState('');
+      const [isValidatingDoctor, setIsValidatingDoctor] = useState(false);
 
-      const handleSubmit = (e) => {
+      const handleSubmit = async (e) => {
         e.preventDefault();
+        setError('');
         if (showForgot) {
           if (!email) { setError(t('auth.error_empty')); return; }
           setResetSent(true);
@@ -461,31 +574,76 @@
         const usersDb = usersDbStr ? JSON.parse(usersDbStr) : [];
         let existingUser = usersDb.find(u => u.email === email);
 
-        // Also check legacy single user if not found in db
         if (!existingUser) {
           const legacyStr = localStorage.getItem('breathe_user');
           if (legacyStr) {
             const legacyUser = JSON.parse(legacyStr);
-            if (legacyUser.email === email) {
-              existingUser = legacyUser;
-            }
+            if (legacyUser.email === email) existingUser = legacyUser;
           }
         }
 
         if (existingUser) {
           if (existingUser.password === password) {
-            // Log them in directly (works for both login & signup clicks if email exists)
+            if (isDoctorMode && existingUser.role !== 'doctor') {
+              setError("Unauthorized: You do not have doctor access.");
+              return;
+            }
             onLogin({ ...existingUser, remember: rememberMe, isNew: false });
             return;
           } else {
-            setError("Incorrect password. Please try again or reset your password.");
+            setError("Incorrect password.");
             return;
           }
         } else {
           if (isLogin) {
             setError(t('auth.error_invalid') || "Invalid email or password");
           } else {
-            onLogin({ isNew: true, email, password, remember: rememberMe });
+            // Validate Signup
+            if (isDoctorMode) {
+              if (!doctorName || !clinicName || !doctorId) {
+                setError("Please fill in all doctor registration fields.");
+                return;
+              }
+              if (!/^\d{6}$/.test(doctorId)) {
+                setError("Doctor ID must be exactly 6 digits.");
+                return;
+              }
+            } else {
+              // Patient Signup - Validate Doctor ID
+              if (!doctorLookupId) {
+                setError("Doctor's Unique ID is mandatory for registration.");
+                return;
+              }
+              setIsValidatingDoctor(true);
+              try {
+                if (db_fs) {
+                  const q = fs_query(fs_collection(db_fs, "doctors"), fs_where("doctorId", "==", doctorLookupId));
+                  const snap = await fs_getDocs(q);
+                  if (snap.empty) {
+                    setError("Doctor ID not found. Please verify with your healthcare provider.");
+                    setIsValidatingDoctor(false);
+                    return;
+                  }
+                }
+              } catch (e) {
+                console.error(e);
+              }
+              setIsValidatingDoctor(false);
+            }
+
+            onLogin({
+              isNew: true,
+              email,
+              password,
+              remember: rememberMe,
+              role: isDoctorMode ? 'doctor' : 'user',
+              doctorName: isDoctorMode ? doctorName : null,
+              clinicName: isDoctorMode ? clinicName : null,
+              doctorId: isDoctorMode ? doctorId : null,
+              linkedDoctorId: !isDoctorMode ? doctorLookupId : null,
+              doctorVerified: !isDoctorMode ? true : false,
+              allowDoctorAccess: !isDoctorMode ? true : false // Default to true as per request
+            });
           }
         }
       };
@@ -581,11 +739,66 @@
                   <input required type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300" />
                 </div>
                 {!showForgot && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('auth.password')}</label>
-                    <input required type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('auth.password')}</label>
+                      <input required type="password" value={password} onChange={e => setPassword(e.target.value)} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                    </div>
+
+                    {!isLogin && isDoctorMode && (
+                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="space-y-4 pt-2 border-t border-blue-100/50">
+                        <div className="flex items-center gap-2 mb-2 text-blue-800 dark:text-blue-300">
+                          <Activity size={16} />
+                          <span className="text-xs font-bold uppercase tracking-widest">Medical Registration</span>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Full Medical Name</label>
+                          <input required type="text" value={doctorName} onChange={e => setDoctorName(e.target.value)} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300" placeholder="Dr. Smith" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Clinic/Hospital Name</label>
+                          <input required type="text" value={clinicName} onChange={e => setClinicName(e.target.value)} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Unique 6-digit Doctor ID</label>
+                          <input required type="text" maxLength={6} value={doctorId} onChange={e => setDoctorId(e.target.value.replace(/\D/g, ''))} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300 font-mono tracking-widest" placeholder="000000" />
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {!isLogin && !isDoctorMode && (
+                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="space-y-3 pt-2 border-t border-gray-100">
+                        <div className="flex items-center gap-2 mb-1 text-[#2B3A55]">
+                          <Activity size={16} />
+                          <span className="text-[10px] font-black uppercase tracking-widest">Healthcare Provider Link</span>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-gray-700 dark:text-slate-300 mb-1">Doctor's Unique ID *</label>
+                          <input
+                            required
+                            type="text"
+                            maxLength={6}
+                            value={doctorLookupId}
+                            onChange={e => setDoctorLookupId(e.target.value.replace(/\D/g, ''))}
+                            className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300 font-mono tracking-[0.5em] text-center"
+                            placeholder="000000"
+                          />
+                          <p className="text-[9px] text-gray-400 mt-1 italic">Registration requires a 6-digit ID provided by your physician.</p>
+                        </div>
+                      </motion.div>
+                    )}
                   </div>
                 )}
+                <div className="flex items-center justify-between p-3 rounded-xl bg-blue-50/50 dark:bg-slate-800/50 border border-blue-100/50">
+                  <span className="text-xs font-semibold text-blue-800 dark:text-blue-300 uppercase tracking-wider">Doctor Access</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsDoctorMode(!isDoctorMode)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isDoctorMode ? 'bg-blue-600' : 'bg-gray-200'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isDoctorMode ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
                 {!showForgot && isLogin && (
                   <div className="flex justify-between items-center text-sm">
                     <label className="flex items-center gap-2 cursor-pointer text-gray-700 dark:text-slate-300">
@@ -595,8 +808,19 @@
                     <button type="button" onClick={() => setShowForgot(true)} className="text-[#1e293b] dark:text-slate-100 hover:underline font-medium">Forgot Password?</button>
                   </div>
                 )}
-                <button type="submit" className="w-full bg-[#1e293b] hover:bg-black text-white py-3 rounded-xl font-medium transition shadow-lg mt-6">
-                  {showForgot ? 'Send Reset Link' : isLogin ? t('auth.login') : t('auth.signup')}
+                <button
+                  type="submit"
+                  disabled={isValidatingDoctor}
+                  className="w-full bg-[#1e293b] hover:bg-black text-white py-4 rounded-xl font-bold transition shadow-lg mt-6 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isValidatingDoctor ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+                      Verifying Doctor ID...
+                    </>
+                  ) : (
+                    showForgot ? 'Send Reset Link' : isLogin ? t('auth.login') : t('auth.signup')
+                  )}
                 </button>
                 {!showForgot && (
                   <button type="button" onClick={handleGoogleAuth} className="w-full bg-white dark:bg-slate-900 border border-gray-200 hover:bg-gray-50 text-gray-800 dark:text-slate-200 py-3 rounded-xl font-medium transition shadow-sm mt-3 flex items-center justify-center gap-2">
@@ -621,15 +845,72 @@
 
     const Onboarding = ({ onComplete, tempUser }) => {
       const { t } = useTranslation();
+      const [isSubmitting, setIsSubmitting] = useState(false);
       const [formData, setFormData] = useState({
-        name: '', phone: '', emergency: '', relationship: '', therapist: ''
+        name: tempUser.doctorName || '',
+        phone: '',
+        emergency: '',
+        relationship: '',
+        therapist: '',
+        clinicName: tempUser.clinicName || '',
+        doctorId: tempUser.doctorId || ''
       });
 
-      const handleSubmit = (e) => {
+      const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.name || !formData.phone || !formData.emergency || !formData.relationship) return;
+        setIsSubmitting(true);
 
-        const user = saveUser({ ...tempUser, ...formData, id: Date.now().toString(), isNew: false });
+        if (tempUser.role === 'doctor') {
+          if (!formData.name || !formData.clinicName || !formData.doctorId) { setIsSubmitting(false); return; }
+        } else {
+          if (!formData.name || !formData.phone || !formData.emergency || !formData.relationship) { setIsSubmitting(false); return; }
+
+          // Validation: Verify if Doctor ID exists
+          const cleanId = formData.therapist ? formData.therapist.trim() : tempUser.linkedDoctorId;
+          if (cleanId) {
+            const docRef = fs_collection(db_fs, "doctors");
+            const q = fs_query(docRef, fs_where("doctorId", "==", cleanId));
+            const snap = await fs_getDocs(q);
+
+            if (snap.empty) {
+              alert("Doctor ID not found. Please verify with your healthcare provider.");
+              setIsSubmitting(false);
+              return;
+            }
+          }
+        }
+
+        const user = {
+          ...tempUser,
+          ...formData,
+          id: tempUser.id || Date.now().toString(),
+          isNew: false,
+          role: tempUser.role || 'user',
+          linkedDoctorId: tempUser.linkedDoctorId || null,
+          doctorVerified: tempUser.doctorVerified || false,
+          allowDoctorAccess: tempUser.allowDoctorAccess ?? false
+        };
+        saveUser(user);
+
+        // Save to Firestore
+        if (db_fs) {
+          try {
+            // Use fs_setDoc to ensure the document ID in Firestore matches the user's ID
+            await fs_setDoc(fs_doc(db_fs, "users", user.id), user);
+
+            // If doctor, also save to doctors collection
+            if (user.role === 'doctor') {
+              await fs_addDoc(fs_collection(db_fs, "doctors"), {
+                uid: user.id,
+                name: user.name,
+                clinicName: user.clinicName,
+                doctorId: user.doctorId,
+                role: 'doctor',
+                createdAt: serverTimestamp()
+              });
+            }
+          } catch (e) { console.error("Error saving user/doctor to FS:", e); }
+        }
 
         // Save to Mock DB array
         const usersDbStr = localStorage.getItem('breathe_users_db');
@@ -645,6 +926,40 @@
         }
         onComplete(user);
       };
+
+      if (tempUser.role === 'doctor') {
+        return (
+          <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="glass w-full max-w-md p-8 rounded-3xl shadow-2xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-2 bg-blue-600"></div>
+              <div className="flex flex-col items-center mb-6">
+                <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center text-blue-600 mb-4">
+                  <Activity size={32} />
+                </div>
+                <h2 className="font-serif-logo text-3xl text-[#1e293b] dark:text-slate-100">Doctor Profile</h2>
+                <p className="text-sm text-center text-gray-600 dark:text-slate-400 mt-2">Confirm your clinical details</p>
+              </div>
+              <form onSubmit={handleSubmit} className="space-y-4 text-start">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Full Name</label>
+                  <input required type="text" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Clinic Name</label>
+                  <input required type="text" value={formData.clinicName} onChange={e => setFormData({ ...formData, clinicName: e.target.value })} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Doctor ID (Verification)</label>
+                  <input disabled type="text" value={formData.doctorId} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-gray-100/50 dark:bg-slate-900/50 text-gray-500 font-mono tracking-widest" />
+                </div>
+                <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium transition shadow-lg mt-6">
+                  {isSubmitting ? 'Registering...' : 'Complete Registration'}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        );
+      }
 
       return (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
@@ -680,8 +995,8 @@
                 <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">{t('onboarding.therapist')}</label>
                 <input type="tel" value={formData.therapist} onChange={e => setFormData({ ...formData, therapist: e.target.value })} className="w-full px-4 py-2 rounded-xl border border-gray-200 bg-white/50 dark:bg-slate-800/50 focus:outline-none focus:ring-2 focus:ring-blue-300" />
               </div>
-              <button type="submit" className="w-full bg-[#1e293b] hover:bg-black text-white py-3 rounded-xl font-medium transition shadow-lg mt-6">
-                {t('onboarding.enter')}
+              <button type="submit" disabled={isSubmitting} className="w-full bg-[#1e293b] hover:bg-black text-white py-3 rounded-xl font-medium transition shadow-lg mt-6">
+                {isSubmitting ? 'Entering...' : t('onboarding.enter')}
               </button>
             </form>
           </motion.div>
@@ -715,6 +1030,89 @@
     // --- 2. Dashboard Navigation ---
     const Dashboard = ({ user, setView, onLogout }) => {
       const { t } = useTranslation();
+      const [currentTab, setCurrentTab] = useState('home');
+      const [linkId, setLinkId] = useState('');
+      const [isVerifying, setIsVerifying] = useState(false);
+      const [linkError, setLinkError] = useState('');
+      const [linkSuccess, setLinkSuccess] = useState(false);
+      const [doctorInfo, setDoctorInfo] = useState(null);
+
+      useEffect(() => {
+        if (user?.linkedDoctorId) {
+          fetchLinkedDoctor(user.linkedDoctorId);
+        }
+      }, [user?.linkedDoctorId]);
+
+      const fetchLinkedDoctor = async (docId) => {
+        if (!db_fs) return;
+        const q = fs_query(fs_collection(db_fs, "doctors"), fs_where("doctorId", "==", docId));
+        const snapshot = await fs_getDocs(q);
+        if (!snapshot.empty) {
+          setDoctorInfo(snapshot.docs[0].data());
+        }
+      };
+
+      const handleLinkDoctor = async () => {
+        if (!/^\d{6}$/.test(linkId)) {
+          setLinkError("Please enter a valid 6-digit ID.");
+          return;
+        }
+        setIsVerifying(true);
+        setLinkError('');
+        try {
+          if (!db_fs) {
+            setLinkError("Database connection unavailable. Please refresh.");
+            setIsVerifying(false);
+            return;
+          }
+          const q = fs_query(fs_collection(db_fs, "doctors"), fs_where("doctorId", "==", linkId));
+          const snapshot = await fs_getDocs(q);
+          if (snapshot.empty) {
+            setLinkError("Doctor ID not found. Please verify with your physician.");
+          } else {
+            const doctorData = snapshot.docs[0].data();
+            // Update User Doc
+            const updatedUser = { ...user, linkedDoctorId: linkId };
+
+            // Try updating Firestore
+            if (user.id) {
+              try {
+                await fs_updateDoc(fs_doc(db_fs, "users", user.id), { linkedDoctorId: linkId });
+              } catch (fsErr) {
+                console.error("Firestore Update Error:", fsErr);
+                // Fallback: if doc doesn't exist by ID, try finding by email
+                const userQ = fs_query(fs_collection(db_fs, "users"), fs_where("email", "==", user.email));
+                const userSnap = await fs_getDocs(userQ);
+                if (!userSnap.empty) {
+                  await fs_updateDoc(fs_doc(db_fs, "users", userSnap.docs[0].id), { linkedDoctorId: linkId });
+                }
+              }
+            }
+
+            // Update Local
+            localStorage.setItem('breathe_user', JSON.stringify(updatedUser));
+            setDoctorInfo(doctorData);
+            setLinkSuccess(true);
+          }
+        } catch (e) {
+          console.error("Linking Error:", e);
+          setLinkError("Verification failed: " + (e.message || "Unknown error"));
+        } finally {
+          setIsVerifying(false);
+        }
+      };
+
+      const togglePrivacy = async (val) => {
+        if (!db_fs || !user) return;
+        try {
+          await fs_updateDoc(fs_doc(db_fs, "users", user.id), { allowDoctorAccess: val });
+          const updatedUser = { ...user, allowDoctorAccess: val };
+          localStorage.setItem('breathe_user', JSON.stringify(updatedUser));
+          // Note: App state 'user' should be updated by parent if we want immediate reactivity, 
+          // but for now we'll assume it's updated on next reload or we can force it.
+          window.dispatchEvent(new Event('storage')); // Simple hack to trigger re-renders if needed
+        } catch (e) { console.error(e); }
+      };
 
       // Custom Blob Component for the beautiful organic 3D backgrounds
       const BlobIcon = ({ children, color, blobColor }) => (
@@ -732,7 +1130,13 @@
       return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center justify-center min-h-screen p-6 max-w-6xl mx-auto">
           <div className="w-full flex justify-between items-center mb-8">
-            <h1 className="font-serif-logo text-2xl text-[#0f172a] dark:text-white font-semibold tracking-tight">Breathe</h1>
+            <div className="flex items-center gap-8">
+              <h1 className="font-serif-logo text-2xl text-[#0f172a] dark:text-white font-semibold tracking-tight">Breathe</h1>
+              <div className="flex gap-4">
+                <button onClick={() => setCurrentTab('home')} className={`text-sm font-bold px-4 py-2 rounded-xl transition ${currentTab === 'home' ? 'bg-[#0f172a] text-white' : 'text-gray-500 hover:bg-gray-100'}`}>Home</button>
+                <button onClick={() => setCurrentTab('medical')} className={`text-sm font-bold px-4 py-2 rounded-xl transition ${currentTab === 'medical' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-100'}`}>Medical</button>
+              </div>
+            </div>
             <div className="flex gap-6 text-sm font-medium items-center">
               {user?.photoURL && <img src={user.photoURL} alt="Profile" className="w-8 h-8 rounded-full shadow-sm border border-white" />}
               <button onClick={() => setView('support')} className="flex items-center gap-2 text-gray-500 dark:text-slate-400 hover:text-gray-800 dark:text-slate-200 transition">
@@ -744,96 +1148,206 @@
             </div>
           </div>
 
-          <div className="text-center mb-16">
-            <BreeIcon size={120} className="mx-auto mb-6 drop-shadow-sm" />
-            <h2 className="font-serif-logo text-5xl text-gradient mb-4 tracking-tight">{t('dashboard.greeting', { name: user?.name?.split(' ')[0] || '' })}</h2>
-            <p className="text-lg text-gray-700 dark:text-slate-300 font-medium tracking-wide max-w-lg mx-auto leading-relaxed">{t('dashboard.subtitle')}</p>
-          </div>
+          {currentTab === 'home' ? (
+            <>
+              <div className="text-center mb-16">
+                <BreeIcon size={120} className="mx-auto mb-6 drop-shadow-sm" />
+                <h2 className="font-serif-logo text-5xl text-gradient mb-4 tracking-tight">{t('dashboard.greeting', { name: user?.name?.split(' ')[0] || '' })}</h2>
+                <p className="text-lg text-gray-700 dark:text-slate-300 font-medium tracking-wide max-w-lg mx-auto leading-relaxed">{t('dashboard.subtitle')}</p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full">
-            {/* Journal Card */}
-            <button onClick={() => setView('journal')} className="glass group hover:bg-white/60 dark:hover:bg-slate-700/60 p-8 rounded-[2rem] flex flex-row items-start text-left gap-8 transition-all transform hover:-translate-y-1 relative overflow-hidden min-h-[300px]">
-              <BlobIcon blobColor="blue-400">
-                <Book className="text-blue-500" style={{ filter: 'drop-shadow(0 8px 12px rgba(59, 130, 246, 0.5)) drop-shadow(0 0 20px rgba(59, 130, 246, 0.4))' }} strokeWidth={2} size={64} />
-              </BlobIcon>
-              <div className="flex flex-col h-full flex-1">
-                <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.journal_title')}</span>
-                <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.journal_desc')}</span>
-                <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
-                  <p className="font-bold text-gray-900 dark:text-white mb-2">Recent Entries</p>
-                  <p>Write out or your mind</p>
-                  <p>Clear focus: time</p>
-                  <p>Principles on your mind</p>
-                </div>
-                <div className="mt-auto">
-                  <div className="inline-block px-6 py-2.5 rounded-full bg-white/40 dark:bg-slate-800/40 border border-white/80 text-sm font-semibold text-[#0f172a] dark:text-white group-hover:bg-white dark:bg-slate-900 group-hover:shadow-md transition-all backdrop-blur-sm">Get Started</div>
-                </div>
+                {doctorInfo && (
+                  <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} className="mt-8 inline-flex items-center gap-4 bg-blue-50/50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 p-3 pr-6 rounded-2xl shadow-sm">
+                    <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold shadow-lg">
+                      {doctorInfo.name?.charAt(0) || 'D'}
+                    </div>
+                    <div className="text-left">
+                      <p className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest">Linked Physician</p>
+                      <p className="text-sm font-bold text-[#0f172a] dark:text-white">{doctorInfo.name}</p>
+                      <p className="text-[10px] text-gray-500">{doctorInfo.clinicName}</p>
+                    </div>
+                  </motion.div>
+                )}
               </div>
-            </button>
 
-            {/* Panic Help Card */}
-            <button onClick={() => setView('panic')} className="glass panic-card group p-8 rounded-[2rem] flex flex-row items-start text-left gap-8 transition-all transform hover:-translate-y-1 relative overflow-hidden min-h-[300px]">
-              <BlobIcon blobColor="red-400">
-                <div className="relative">
-                  <Heart className="text-red-600" style={{ filter: 'drop-shadow(0 10px 15px rgba(220, 38, 38, 0.6)) drop-shadow(0 0 25px rgba(239, 68, 68, 0.5))' }} strokeWidth={2} size={70} />
-                  <span className="absolute -top-2 -right-6 text-red-600 font-black text-3xl italic animate-pulse" style={{ filter: 'drop-shadow(0 2px 4px rgba(220, 38, 38, 0.4))' }}>!!</span>
-                </div>
-              </BlobIcon>
-              <div className="flex flex-col h-full flex-1">
-                <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.panic_title')}</span>
-                <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.panic_desc')}</span>
-                <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
-                  <p className="font-bold text-gray-900 dark:text-white mb-2">Breathing Guide</p>
-                  <p>Immediate calming tools</p>
-                  <p className="font-bold text-gray-900 dark:text-white mt-3 mb-1">Contact List</p>
-                  <p>Emergency Contact</p>
-                </div>
-                <div className="mt-auto">
-                  <div className="inline-block px-6 py-2.5 rounded-full bg-white/40 dark:bg-slate-800/40 border border-white/80 text-sm font-semibold text-[#0f172a] dark:text-white group-hover:bg-white dark:bg-slate-900 group-hover:shadow-md transition-all backdrop-blur-sm">Get Started</div>
-                </div>
-              </div>
-            </button>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full">
+                {/* Journal Card */}
+                <button onClick={() => setView('journal')} className="glass group hover:bg-white/60 dark:hover:bg-slate-700/60 p-8 rounded-[2rem] flex flex-row items-start text-left gap-8 transition-all transform hover:-translate-y-1 relative overflow-hidden min-h-[300px]">
+                  <BlobIcon blobColor="blue-400">
+                    <Book className="text-blue-500" style={{ filter: 'drop-shadow(0 8px 12px rgba(59, 130, 246, 0.5)) drop-shadow(0 0 20px rgba(59, 130, 246, 0.4))' }} strokeWidth={2} size={64} />
+                  </BlobIcon>
+                  <div className="flex flex-col h-full flex-1">
+                    <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.journal_title')}</span>
+                    <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.journal_desc')}</span>
+                    <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
+                      <p className="font-bold text-gray-900 dark:text-white mb-2">Recent Entries</p>
+                      <p>Write out or your mind</p>
+                      <p>Clear focus: time</p>
+                      <p>Principles on your mind</p>
+                    </div>
+                    <div className="mt-auto">
+                      <div className="inline-block px-6 py-2.5 rounded-full bg-white/40 dark:bg-slate-800/40 border border-white/80 text-sm font-semibold text-[#0f172a] dark:text-white group-hover:bg-white dark:bg-slate-900 group-hover:shadow-md transition-all backdrop-blur-sm">Get Started</div>
+                    </div>
+                  </div>
+                </button>
 
-            {/* Talk to Bree Card */}
-            <button onClick={() => setView('chat')} className="glass group hover:bg-white/60 dark:hover:bg-slate-700/60 p-8 rounded-[2rem] flex flex-row items-start text-left gap-8 transition-all transform hover:-translate-y-1 relative overflow-hidden min-h-[300px]">
-              <BlobIcon blobColor="purple-400">
-                <MessageCircle className="text-purple-500" style={{ filter: 'drop-shadow(0 8px 12px rgba(168, 85, 247, 0.5)) drop-shadow(0 0 20px rgba(168, 85, 247, 0.4))' }} strokeWidth={2} size={64} />
-              </BlobIcon>
-              <div className="flex flex-col h-full flex-1">
-                <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.chat_title')}</span>
-                <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.chat_desc')}</span>
-                <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
-                  <p className="font-bold text-gray-900 dark:text-white mb-2">My Reflection Path</p>
-                  <p>Daily Checks</p>
-                  <p>Weekly Deep Dives</p>
-                  <p>Paths to healing</p>
-                </div>
-                <div className="mt-auto">
-                  <div className="inline-block px-6 py-2.5 rounded-full bg-white/40 dark:bg-slate-800/40 border border-white/80 text-sm font-semibold text-[#0f172a] dark:text-white group-hover:bg-white dark:bg-slate-900 group-hover:shadow-md transition-all backdrop-blur-sm">Get Started</div>
-                </div>
-              </div>
-            </button>
+                {/* Panic Help Card */}
+                <button onClick={() => setView('panic')} className="glass panic-card group p-8 rounded-[2rem] flex flex-row items-start text-left gap-8 transition-all transform hover:-translate-y-1 relative overflow-hidden min-h-[300px]">
+                  <BlobIcon blobColor="red-400">
+                    <div className="relative">
+                      <Heart className="text-red-600" style={{ filter: 'drop-shadow(0 10px 15px rgba(220, 38, 38, 0.6)) drop-shadow(0 0 25px rgba(239, 68, 68, 0.5))' }} strokeWidth={2} size={70} />
+                      <span className="absolute -top-2 -right-6 text-red-600 font-black text-3xl italic animate-pulse" style={{ filter: 'drop-shadow(0 2px 4px rgba(220, 38, 38, 0.4))' }}>!!</span>
+                    </div>
+                  </BlobIcon>
+                  <div className="flex flex-col h-full flex-1">
+                    <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.panic_title')}</span>
+                    <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.panic_desc')}</span>
+                    <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
+                      <p className="font-bold text-gray-900 dark:text-white mb-2">Breathing Guide</p>
+                      <p>Immediate calming tools</p>
+                      <p className="font-bold text-gray-900 dark:text-white mt-3 mb-1">Contact List</p>
+                      <p>Emergency Contact</p>
+                    </div>
+                    <div className="mt-auto">
+                      <div className="inline-block px-6 py-2.5 rounded-full bg-white/40 dark:bg-slate-800/40 border border-white/80 text-sm font-semibold text-[#0f172a] dark:text-white group-hover:bg-white dark:bg-slate-900 group-hover:shadow-md transition-all backdrop-blur-sm">Get Started</div>
+                    </div>
+                  </div>
+                </button>
 
-            {/* Mood Tracker Card */}
-            <button onClick={() => setView('mood')} className="glass group hover:bg-white/60 dark:hover:bg-slate-700/60 p-8 rounded-[2rem] flex flex-row items-start text-left gap-8 transition-all transform hover:-translate-y-1 relative overflow-hidden min-h-[300px]">
-              <div className="relative w-40 h-40 flex flex-col items-center justify-center flex-shrink-0">
-                <div className="absolute inset-2 bg-white dark:bg-slate-900 backdrop-blur-md rounded-[2.5rem] shadow-[0_15px_30px_rgba(0,0,0,0.05),inset_0_2px_4px_rgba(255,255,255,1)] border border-white transition-transform duration-500 group-hover:scale-105"></div>
-                <Activity className="relative z-10 text-orange-500 transition-transform duration-500 group-hover:scale-110" style={{ filter: 'drop-shadow(0 6px 10px rgba(249, 115, 22, 0.4))' }} strokeWidth={2.5} size={56} />
+                {/* Talk to Bree Card */}
+                <button onClick={() => setView('chat')} className="glass group hover:bg-white/60 dark:hover:bg-slate-700/60 p-8 rounded-[2rem] flex flex-row items-start text-left gap-8 transition-all transform hover:-translate-y-1 relative overflow-hidden min-h-[300px]">
+                  <BlobIcon blobColor="purple-400">
+                    <MessageCircle className="text-purple-500" style={{ filter: 'drop-shadow(0 8px 12px rgba(168, 85, 247, 0.5)) drop-shadow(0 0 20px rgba(168, 85, 247, 0.4))' }} strokeWidth={2} size={64} />
+                  </BlobIcon>
+                  <div className="flex flex-col h-full flex-1">
+                    <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.chat_title')}</span>
+                    <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.chat_desc')}</span>
+                    <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
+                      <p className="font-bold text-gray-900 dark:text-white mb-2">My Reflection Path</p>
+                      <p>Daily Checks</p>
+                      <p>Weekly Deep Dives</p>
+                      <p>Paths to healing</p>
+                    </div>
+                    <div className="mt-auto">
+                      <div className="inline-block px-6 py-2.5 rounded-full bg-white/40 dark:bg-slate-800/40 border border-white/80 text-sm font-semibold text-[#0f172a] dark:text-white group-hover:bg-white dark:bg-slate-900 group-hover:shadow-md transition-all backdrop-blur-sm">Get Started</div>
+                    </div>
+                  </div>
+                </button>
+
+                {/* Mood Tracker Card */}
+                <button onClick={() => setView('mood')} className="glass group hover:bg-white/60 dark:hover:bg-slate-700/60 p-8 rounded-[2rem] flex flex-row items-start text-left gap-8 transition-all transform hover:-translate-y-1 relative overflow-hidden min-h-[300px]">
+                  <div className="relative w-40 h-40 flex flex-col items-center justify-center flex-shrink-0">
+                    <div className="absolute inset-2 bg-white dark:bg-slate-900 backdrop-blur-md rounded-[2.5rem] shadow-[0_15px_30px_rgba(0,0,0,0.05),inset_0_2px_4px_rgba(255,255,255,1)] border border-white transition-transform duration-500 group-hover:scale-105"></div>
+                    <Activity className="relative z-10 text-orange-500 transition-transform duration-500 group-hover:scale-110" style={{ filter: 'drop-shadow(0 6px 10px rgba(249, 115, 22, 0.4))' }} strokeWidth={2.5} size={56} />
+                  </div>
+                  <div className="flex flex-col h-full flex-1">
+                    <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.mood_title')}</span>
+                    <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.mood_desc')}</span>
+                    <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
+                      <p className="font-bold text-gray-900 dark:text-white mb-2">View History</p>
+                      <p>Track your emotional state</p>
+                      <p>Identify patterns</p>
+                    </div>
+                    <div className="mt-auto">
+                      <div className="inline-block px-6 py-2.5 rounded-full bg-white/40 dark:bg-slate-800/40 border border-white/80 text-sm font-semibold text-[#0f172a] dark:text-white group-hover:bg-white dark:bg-slate-900 group-hover:shadow-md transition-all backdrop-blur-sm">Get Started</div>
+                    </div>
+                  </div>
+                </button>
               </div>
-              <div className="flex flex-col h-full flex-1">
-                <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.mood_title')}</span>
-                <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.mood_desc')}</span>
-                <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
-                  <p className="font-bold text-gray-900 dark:text-white mb-2">View History</p>
-                  <p>Track your emotional state</p>
-                  <p>Identify patterns</p>
+            </>
+          ) : (
+            <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="w-full max-w-4xl bg-white/40 backdrop-blur-xl rounded-[3rem] p-12 shadow-2xl border border-white/60">
+              <div className="flex justify-between items-start mb-12">
+                <div>
+                  <h2 className="font-serif-logo text-4xl text-[#0f172a] mb-2">Medical Connection</h2>
+                  <p className="text-gray-600 font-medium tracking-wide">Link your profile with a professional healthcare provider.</p>
                 </div>
-                <div className="mt-auto">
-                  <div className="inline-block px-6 py-2.5 rounded-full bg-white/40 dark:bg-slate-800/40 border border-white/80 text-sm font-semibold text-[#0f172a] dark:text-white group-hover:bg-white dark:bg-slate-900 group-hover:shadow-md transition-all backdrop-blur-sm">Get Started</div>
+                <div className="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center text-blue-600">
+                  <Activity size={32} />
                 </div>
               </div>
-            </button>
-          </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+                <div className="space-y-8">
+                  <div className="p-8 bg-white/60 rounded-3xl border border-white shadow-sm">
+                    <h3 className="font-bold text-lg text-[#0f172a] mb-4 flex items-center gap-2">
+                      <ShieldCheck size={20} className="text-blue-600" /> Professional Linking
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-6 leading-relaxed">Enter the 6-digit unique ID provided by your doctor to grant them access to your health metrics.</p>
+
+                    <div className="flex gap-4">
+                      <input
+                        type="text"
+                        maxLength={6}
+                        value={linkId}
+                        onChange={e => setLinkId(e.target.value.replace(/\D/g, ''))}
+                        className="flex-1 px-4 py-3 rounded-xl border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono tracking-widest text-lg"
+                        placeholder="000000"
+                        disabled={!!doctorInfo}
+                      />
+                      <button
+                        onClick={handleLinkDoctor}
+                        disabled={isVerifying || !!doctorInfo || linkId.length !== 6}
+                        className="px-6 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition disabled:opacity-50 shadow-lg shadow-blue-200"
+                      >
+                        {isVerifying ? 'Linking...' : doctorInfo ? 'Linked' : 'Link Doctor'}
+                      </button>
+                    </div>
+                    {linkError && <p className="text-red-500 text-xs mt-2 font-bold">{linkError}</p>}
+                    {linkSuccess && <p className="text-green-600 text-xs mt-2 font-bold">Successfully linked!</p>}
+                  </div>
+
+                  {doctorInfo && (
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="p-8 bg-blue-600 text-white rounded-3xl shadow-xl border-4 border-white/20 relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-4 opacity-10">
+                        <Activity size={100} />
+                      </div>
+                      <p className="text-[10px] font-black uppercase tracking-widest opacity-70 mb-1">Assigned Physician</p>
+                      <h4 className="text-2xl font-serif-logo mb-1">{doctorInfo.name}</h4>
+                      <p className="text-sm font-medium opacity-90">{doctorInfo.clinicName}</p>
+                      <div className="mt-4 flex items-center gap-2 text-xs font-bold bg-white/20 inline-block px-3 py-1 rounded-full">
+                        Verified Practitioner ✓
+                      </div>
+                    </motion.div>
+                  )}
+                </div>
+
+                <div className="space-y-8">
+                  <div className="p-8 bg-white/60 rounded-3xl border border-white shadow-sm h-full">
+                    <h3 className="font-bold text-lg text-[#0f172a] mb-4 flex items-center gap-2">
+                      <Lock size={20} className="text-blue-600" /> Privacy Controls
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-8 leading-relaxed">You control who sees your private data. Your doctor can only view your detailed logs if you explicitly allow it here.</p>
+
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                        <div>
+                          <p className="text-sm font-bold text-[#0f172a]">Live Monitoring</p>
+                          <p className="text-[10px] text-gray-500">Allow doctor to see your sentiment scores</p>
+                        </div>
+                        <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center text-green-600">
+                          <Check size={20} />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                        <div>
+                          <p className="text-sm font-bold text-[#0f172a]">Journal & Chat Logs</p>
+                          <p className="text-[10px] text-gray-500">Allow doctor to read your conversation history</p>
+                        </div>
+                        <button
+                          onClick={() => togglePrivacy(!user.allowDoctorAccess)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${user?.allowDoctorAccess ? 'bg-blue-600' : 'bg-gray-200'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${user?.allowDoctorAccess ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-gray-400 italic text-center px-4">"Your data is encrypted and only accessible to verified medical professionals you have linked with."</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
         </motion.div>
       );
     };
@@ -1200,6 +1714,24 @@
         endRef.current?.scrollIntoView({ behavior: 'smooth' });
       }, [messages, isTyping]);
 
+      // Typing Indicator Sync
+      useEffect(() => {
+        if (!db_fs || !user?.id) return;
+        const updateTypingStatus = async (status) => {
+          try {
+            await fs_setDoc(fs_doc(db_fs, "users", user.id), { isTyping: status }, { merge: true });
+          } catch (e) { /* ignore */ }
+        };
+
+        if (input.trim().length > 0) {
+          updateTypingStatus(true);
+          const timer = setTimeout(() => updateTypingStatus(false), 3000);
+          return () => clearTimeout(timer);
+        } else {
+          updateTypingStatus(false);
+        }
+      }, [input, user?.id]);
+
       const handleSend = async () => {
         const cleanedInput = input.replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "").trim();
         if (!cleanedInput) {
@@ -1208,10 +1740,23 @@
         }
 
         const userMsg = input.trim();
-        const newMessages = [...messages, { id: Date.now(), sender: 'user', text: userMsg }];
+        const newMsg = { id: Date.now(), sender: 'user', text: userMsg, timestamp: new Date() };
+        const newMessages = [...messages, newMsg];
         setMessages(newMessages);
         setInput('');
         setIsTyping(true);
+
+        // Save to Firestore
+        if (db_fs && user?.id) {
+          try {
+            await fs_addDoc(fs_collection(db_fs, "users_chats"), {
+              userId: user.id,
+              text: userMsg,
+              sender: 'user',
+              timestamp: serverTimestamp()
+            });
+          } catch (e) { console.error("Error saving chat to FS:", e); }
+        }
 
         // Score is now computed after AI response
 
@@ -1221,8 +1766,8 @@
             : '';
           const scoreContext = `\nCurrent session wellbeing score: ${sentimentScore}/10. Calibrate your tone to this.`;
           const languageContext = lang === 'ar'
-            ? '\nCRITICAL: Respond EXCLUSIVELY in Arabic. Do NOT mix languages.'
-            : '\nRespond in English only.';
+            ? '\nCRITICAL: You are an empathetic mental health assistant. Respond exclusively in warm, professional Arabic. Use cultural nuances appropriate for the Middle East. Do NOT mix languages.'
+            : '\nYou are an empathetic mental health assistant. Respond exclusively in English.';
 
           const conversationHistory = newMessages.map(m => ({
             role: m.sender === 'user' ? 'user' : 'model',
@@ -1296,7 +1841,20 @@
             safeText += lang === 'ar' ? ' أخبرني أكثر.' : ' Tell me more about that.';
           }
 
-          setMessages(prev => [...prev, { id: Date.now() + 1, sender: 'bree', text: safeText }]);
+          const breeMsg = { id: Date.now() + 1, sender: 'bree', text: safeText, timestamp: new Date() };
+          setMessages(prev => [...prev, breeMsg]);
+
+          // Save to Firestore
+          if (db_fs && user?.id) {
+            try {
+              await fs_addDoc(fs_collection(db_fs, "users_chats"), {
+                userId: user.id,
+                text: safeText,
+                sender: 'bree',
+                timestamp: serverTimestamp()
+              });
+            } catch (e) { console.error("Error saving Bree chat to FS:", e); }
+          }
         } catch (error) {
           console.group('%c[Bree] API Error', 'color:#ef4444;font-weight:bold');
           console.error('Message :', error?.message);
@@ -1322,6 +1880,34 @@
           setIsTyping(false);
         }
       };
+
+      // Listen for Doctor Feedback
+      useEffect(() => {
+        if (!db_fs || !user?.id) return;
+        const q = fs_query(
+          fs_collection(db_fs, "doctor_feedback"),
+          fs_where("userId", "==", user.id),
+          fs_orderBy("timestamp", "asc")
+        );
+        const unsubscribe = fs_onSnapshot(q, (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+              const data = change.doc.data();
+              // Check if message already exists in local state to avoid duplicates
+              setMessages(prev => {
+                if (prev.find(m => m.id === change.doc.id)) return prev;
+                return [...prev, {
+                  id: change.doc.id,
+                  sender: 'doctor',
+                  text: data.text,
+                  timestamp: data.timestamp?.toDate ? data.timestamp.toDate() : (data.timestamp || new Date())
+                }];
+              });
+            }
+          });
+        });
+        return () => unsubscribe();
+      }, [user?.id]);
 
       return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-screen flex flex-col p-4 md:p-8 max-w-6xl mx-auto">
@@ -1385,7 +1971,14 @@
                 {messages.map((msg) => (
                   <motion.div key={msg.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                     {msg.sender === 'bree' && <BreeIcon size={32} className="mt-auto" />}
-                    <div className={`p-4 rounded-[24px] max-w-[80%] ${msg.sender === 'user' ? 'bg-gradient-to-tr from-[#0f172a] to-[#1e293b] text-white rounded-br-sm shadow-md' : 'glass bg-white/60 text-[#0f172a] dark:text-white shadow-sm rounded-bl-sm border border-white/50'}`}>
+                    {msg.sender === 'doctor' && <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-[10px] mt-auto shadow-lg">DR</div>}
+                    <div className={`p-4 rounded-[24px] max-w-[80%] ${msg.sender === 'user'
+                        ? 'bg-gradient-to-tr from-[#0f172a] to-[#1e293b] text-white rounded-br-sm shadow-md'
+                        : msg.sender === 'doctor'
+                          ? 'bg-blue-600 text-white rounded-bl-sm shadow-lg border-2 border-white/20'
+                          : 'glass bg-white/60 text-[#0f172a] dark:text-white shadow-sm rounded-bl-sm border border-white/50'
+                      }`}>
+                      {msg.sender === 'doctor' && <p className="text-[10px] font-bold mb-1 opacity-70 uppercase tracking-tighter">Doctor's Feedback</p>}
                       <p className="leading-relaxed text-[15px]" dir="auto">{msg.text}</p>
                     </div>
                   </motion.div>
@@ -1500,9 +2093,77 @@
       const [pinError, setPinError] = useState('');
       const [isAnalyzing, setIsAnalyzing] = useState(false);
 
+      // New History States
+      const [viewDate, setViewDate] = useState(new Date());
+      const [history, setHistory] = useState([]);
+      const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+      const [isFetchingEntry, setIsFetchingEntry] = useState(false);
+      const [historicalEntry, setHistoricalEntry] = useState(null);
+
+      const isToday = (date) => {
+        const today = new Date();
+        return date.getDate() === today.getDate() &&
+          date.getMonth() === today.getMonth() &&
+          date.getFullYear() === today.getFullYear();
+      };
+
+      // Fetch last 5 entries for sidebar
       useEffect(() => {
-        if (user?.journalEntry) setEntry(user.journalEntry);
-      }, [user]);
+        if (!isUnlocked || !db_fs || !user?.id) return;
+        setIsLoadingHistory(true);
+        const q = fs_query(
+          fs_collection(db_fs, "users_journals"),
+          fs_where("userId", "==", user.id),
+          fs_orderBy("timestamp", "desc")
+        );
+        const unsubscribe = fs_onSnapshot(q, (snap) => {
+          const entries = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setHistory(entries.slice(0, 5));
+          setIsLoadingHistory(false);
+        });
+        return () => unsubscribe();
+      }, [isUnlocked, user?.id]);
+
+      // Fetch specific entry for selected date
+      useEffect(() => {
+        if (!isUnlocked || isToday(viewDate)) {
+          setEntry(user?.journalEntry || '');
+          setHistoricalEntry(null);
+          return;
+        }
+
+        const fetchPastEntry = async () => {
+          setIsFetchingEntry(true);
+          try {
+            const startOfDay = new Date(viewDate);
+            startOfDay.setHours(0, 0, 0, 0);
+            const endOfDay = new Date(viewDate);
+            endOfDay.setHours(23, 59, 59, 999);
+
+            const q = fs_query(
+              fs_collection(db_fs, "users_journals"),
+              fs_where("userId", "==", user.id),
+              fs_where("timestamp", ">=", startOfDay),
+              fs_where("timestamp", "<=", endOfDay)
+            );
+            const snap = await fs_getDocs(q);
+            if (!snap.empty) {
+              const data = snap.docs[0].data();
+              setEntry(data.text);
+              setHistoricalEntry(data);
+            } else {
+              setEntry("");
+              setHistoricalEntry({ text: "", summary: "No entry for this date." });
+            }
+          } catch (e) {
+            console.error(e);
+          } finally {
+            setIsFetchingEntry(false);
+          }
+        };
+
+        fetchPastEntry();
+      }, [viewDate, isUnlocked, user?.id]);
 
       const handleUnlock = () => {
         if (!user.journalPin) {
@@ -1517,10 +2178,22 @@
         }
       };
 
-      const handleSave = () => {
+      const handleSave = async () => {
         const updatedUser = { ...user, journalEntry: entry };
         setUser(updatedUser);
         localStorage.setItem('breathe_user', JSON.stringify(updatedUser));
+
+        // Save to Firestore
+        if (db_fs && user?.id) {
+          try {
+            await fs_addDoc(fs_collection(db_fs, "users_journals"), {
+              userId: user.id,
+              text: entry,
+              timestamp: serverTimestamp(),
+              permissionGranted: true // Mocking permission for now
+            });
+          } catch (e) { console.error("Error saving journal to FS:", e); }
+        }
         alert('Journal entry saved.');
       };
 
@@ -1578,12 +2251,23 @@
           </div>
 
           <div className="flex-1 flex gap-8">
-            <div className="flex-1 bg-[#f8f9fa] rounded-3xl shadow-xl relative border-s-[5px] border-red-300 overflow-hidden flex flex-col" style={{ backgroundImage: 'repeating-linear-gradient(transparent, transparent 39px, #d1d5db 39px, #d1d5db 40px)', lineHeight: '40px', paddingTop: '40px' }}>
+            <div className={`flex-1 bg-[#f8f9fa] rounded-3xl shadow-xl relative border-s-[5px] border-red-300 overflow-hidden flex flex-col ${isFetchingEntry ? 'opacity-50' : 'opacity-100'} transition-opacity`} style={{ backgroundImage: 'repeating-linear-gradient(transparent, transparent 39px, #d1d5db 39px, #d1d5db 40px)', lineHeight: '40px', paddingTop: '40px' }}>
               <div className="absolute top-0 bottom-0 start-12 w-[2px] bg-red-300 opacity-60"></div>
+              {!isToday(viewDate) && (
+                <div className="absolute top-4 right-10 z-10 bg-blue-100 text-blue-600 px-4 py-1 rounded-full text-xs font-bold shadow-sm flex items-center gap-2">
+                  <Activity size={14} /> Historical Entry - Read Only
+                </div>
+              )}
+              {isFetchingEntry && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/20 z-20">
+                  <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+              )}
               <textarea
                 value={entry}
                 onChange={(e) => setEntry(e.target.value)}
-                className="w-full flex-1 bg-transparent resize-none outline-none px-16 text-[#2B3A55] dark:text-slate-200 text-xl font-serif-logo leading-[40px]"
+                readOnly={!isToday(viewDate)}
+                className={`w-full flex-1 bg-transparent resize-none outline-none px-16 text-[#2B3A55] dark:text-slate-200 text-xl font-serif-logo leading-[40px] ${!isToday(viewDate) ? 'cursor-default' : ''}`}
                 placeholder={t('journal.placeholder')}
                 spellCheck="false"
               />
@@ -1601,23 +2285,79 @@
                 </div>
               </div>
 
-              <div className="glass rounded-2xl p-6 flex items-center justify-between shadow-lg relative overflow-hidden bg-gradient-to-br from-[#fdfaf0] to-white">
-                <BreeIcon size={90} className="drop-shadow-lg" />
-                <div className="bg-white/80 p-3 rounded-xl text-xs text-[#2B3A55] dark:text-slate-200 shadow-sm mx-2">
-                  <p className="font-medium text-gray-400 mb-1">{t('journal.previous')}</p>
-                  <p className="underline opacity-70 cursor-pointer hover:text-blue-500 mb-1">{t('journal.yesterday')}</p>
-                  <p className="underline opacity-70 cursor-pointer hover:text-blue-500">{t('journal.days_ago')}</p>
+              <div className="glass rounded-2xl p-6 flex flex-col shadow-lg relative overflow-hidden bg-gradient-to-br from-[#fdfaf0] to-white">
+                <div className="flex items-center justify-between mb-4">
+                  <BreeIcon size={64} className="drop-shadow-lg" />
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{t('journal.previous')}</p>
+                    <p className="text-xs font-bold text-blue-600">{history.length} Saved Entries</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => setViewDate(new Date())}
+                    className={`w-full text-left px-3 py-2 rounded-xl text-xs transition flex items-center justify-between ${isToday(viewDate) ? 'bg-blue-600 text-white font-bold' : 'bg-white/50 text-gray-600 hover:bg-blue-50'}`}
+                  >
+                    <span>Today</span>
+                    {isToday(viewDate) && <Check size={12} />}
+                  </button>
+                  {history.map((h, i) => {
+                    const date = h.timestamp?.toDate ? h.timestamp.toDate() : new Date(h.timestamp);
+                    if (isToday(date)) return null;
+                    
+                    const isSelected = viewDate.toDateString() === date.toDateString();
+                    
+                    // Determine label
+                    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+                    const twoDaysAgo = new Date(); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+                    
+                    let dateLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    if (date.toDateString() === yesterday.toDateString()) dateLabel = "Yesterday";
+                    else if (date.toDateString() === twoDaysAgo.toDateString()) dateLabel = "2 days ago";
+
+                    return (
+                      <button
+                        key={h.id}
+                        onClick={() => setViewDate(date)}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs transition flex flex-col ${isSelected ? 'bg-blue-600 text-white font-bold' : 'bg-white/50 text-gray-600 hover:bg-blue-50'}`}
+                      >
+                        <div className="flex justify-between items-center w-full">
+                          <span>{dateLabel}</span>
+                          {isSelected && <Check size={12} />}
+                        </div>
+                        <p className={`text-[9px] truncate ${isSelected ? 'text-blue-100' : 'text-gray-400'}`}>
+                          {h.summary || "View details →"}
+                        </p>
+                      </button>
+                    );
+                  })}
+                  {isLoadingHistory && <div className="text-center py-2"><div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div></div>}
                 </div>
               </div>
 
-              <div className="bg-[#3B5A81] rounded-2xl p-8 text-white shadow-lg flex-1">
-                <h3 className="font-serif-logo text-3xl mb-6 text-blue-100">{t('journal.tell_me')}</h3>
-                <ul className="space-y-4 text-sm opacity-90 leading-relaxed list-disc pis-4 marker:text-blue-300">
-                  <li>{t('journal.q1')}</li>
-                  <li>{t('journal.q2')}</li>
-                  <li>{t('journal.q3')}</li>
-                  <li>{t('journal.q4')}</li>
-                </ul>
+              <div className="bg-[#3B5A81] rounded-2xl p-8 text-white shadow-lg flex-1 relative overflow-hidden">
+                <div className="absolute -right-4 -bottom-4 opacity-10">
+                  <Book size={120} />
+                </div>
+                {!isToday(viewDate) && historicalEntry?.summary ? (
+                  <div className="relative z-10">
+                    <h3 className="font-serif-logo text-2xl mb-4 text-blue-100">AI Analysis</h3>
+                    <p className="text-sm italic leading-relaxed text-blue-50 bg-white/10 p-4 rounded-xl border border-white/10">
+                      "{historicalEntry.summary}"
+                    </p>
+                    <p className="text-[10px] mt-4 opacity-50 uppercase tracking-widest font-black">Logged on {viewDate.toLocaleDateString()}</p>
+                  </div>
+                ) : (
+                  <div className="relative z-10">
+                    <h3 className="font-serif-logo text-3xl mb-6 text-blue-100">{t('journal.tell_me')}</h3>
+                    <ul className="space-y-4 text-sm opacity-90 leading-relaxed list-disc pis-4 marker:text-blue-300">
+                      <li>{t('journal.q1')}</li>
+                      <li>{t('journal.q2')}</li>
+                      <li>{t('journal.q3')}</li>
+                      <li>{t('journal.q4')}</li>
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1632,24 +2372,386 @@
       );
     };
 
-    // --- Main App Component ---
-    const App = () => {
-      const [isDark, setIsDark] = useState(() => {
-        const saved = localStorage.getItem('theme');
-        if (saved) return saved === 'dark';
-        return window.matchMedia('(prefers-color-scheme: dark)').matches;
-      });
+    // --- 7. Doctor Dashboard ---
+    const DoctorDashboard = ({ user: doctorUser, onLogout }) => {
+      const { t, i18n } = useTranslation();
+      const [patients, setPatients] = useState([]);
+      const [selectedPatient, setSelectedPatient] = useState(null);
+      const [patientChat, setPatientChat] = useState([]);
+      const [patientJournals, setPatientJournals] = useState([]);
+      const [patientMetrics, setPatientMetrics] = useState([]);
+      const [feedback, setFeedback] = useState('');
+      const [isLoading, setIsLoading] = useState(true);
+      const [patientTyping, setPatientTyping] = useState(false);
+      const [aiSummary, setAiSummary] = useState('');
+      const [isSummarizing, setIsSummarizing] = useState(false);
+      const [showNewPatientToast, setShowNewPatientToast] = useState(false);
+      const [isDetailLoading, setIsDetailLoading] = useState(false);
+      const [isAnalyzingLive, setIsAnalyzingLive] = useState(false);
+      const [liveSentimentNote, setLiveSentimentNote] = useState('');
+      const [selectedJournal, setSelectedJournal] = useState(null);
 
       useEffect(() => {
-        const root = document.documentElement;
-        if (isDark) {
-          root.classList.add('dark');
-          localStorage.setItem('theme', 'dark');
-        } else {
-          root.classList.remove('dark');
-          localStorage.setItem('theme', 'light');
+        if (!db_fs || !doctorUser?.doctorId) return;
+        const cleanId = doctorUser.doctorId.toString().trim();
+        const q = fs_query(fs_collection(db_fs, "users"), fs_where("linkedDoctorId", "==", cleanId));
+        const unsubscribe = fs_onSnapshot(q, (snapshot) => {
+          const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          setPatients(list);
+          setIsLoading(false);
+        });
+        return () => unsubscribe();
+      }, [doctorUser?.doctorId]);
+
+      // Trend Analysis: Check for mood decline in last 3 journals
+      const hasMoodDecline = useMemo(() => {
+        if (!patientJournals || patientJournals.length < 3) return false;
+        const recent = patientJournals.slice(0, 3);
+        const negativeWords = ['sad', 'heavy', 'panic', 'pain', 'hopeless', 'tired'];
+        const score = recent.reduce((acc, j) => {
+          if (!j || !j.text) return acc;
+          const hits = negativeWords.filter(w => j.text.toLowerCase().includes(w)).length;
+          return acc + hits;
+        }, 0);
+        return score >= 3;
+      }, [patientJournals]);
+
+      useEffect(() => {
+        if (!db_fs || !selectedPatient?.id) return;
+        setIsDetailLoading(true);
+        const chatQ = fs_query(fs_collection(db_fs, "users_chats"), fs_where("userId", "==", selectedPatient.id), fs_orderBy("timestamp", "asc"));
+        const journalQ = fs_query(fs_collection(db_fs, "users_journals"), fs_where("userId", "==", selectedPatient.id), fs_orderBy("timestamp", "desc"));
+        const metricsQ = fs_query(fs_collection(db_fs, "users_metrics"), fs_where("userId", "==", selectedPatient.id), fs_orderBy("timestamp", "desc"));
+        const unsubChat = fs_onSnapshot(chatQ, (snap) => setPatientChat(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+        const unsubJournal = fs_onSnapshot(journalQ, (snap) => setPatientJournals(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+        const unsubMetric = fs_onSnapshot(metricsQ, (snap) => {
+          setPatientMetrics(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+          setIsDetailLoading(false);
+        });
+        return () => { unsubChat(); unsubJournal(); unsubMetric(); };
+      }, [selectedPatient?.id]);
+
+      // Live Sentiment Analysis Effect
+      useEffect(() => {
+        if (!selectedPatient || patientChat.length < 3 || isAnalyzingLive) return;
+
+        const lastMsg = patientChat[patientChat.length - 1];
+        if (lastMsg.sender !== 'user') return;
+
+        const analyzeLive = async () => {
+          setIsAnalyzingLive(true);
+          try {
+            const apiKey = getClientGeminiKey();
+            if (!apiKey) return;
+            const genAI = new GoogleGenerativeAI(apiKey);
+            const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+            const prompt = `You are a clinical monitor. Based on the user's latest message: "${lastMsg.text}", provide a 1-sentence "Sentiment Note" for their doctor. Focus on immediate emotional state (e.g., "Patient is expressing severe frustration" or "Patient seems more calm"). Start directly with the note.`;
+
+            const result = await model.generateContent(prompt);
+            setLiveSentimentNote(result.response.text());
+          } catch (e) {
+            console.error("Live analysis failed", e);
+          } finally {
+            setIsAnalyzingLive(false);
+          }
+        };
+
+        const timer = setTimeout(analyzeLive, 2000); // Debounce to avoid too many calls
+        return () => clearTimeout(timer);
+      }, [patientChat.length, selectedPatient]);
+
+      const sendFeedback = async () => {
+        if (!feedback.trim() || !selectedPatient) return;
+        try {
+          await fs_addDoc(fs_collection(db_fs, "doctor_feedback"), {
+            userId: selectedPatient.id,
+            text: feedback,
+            timestamp: serverTimestamp()
+          });
+          setFeedback('');
+          alert("Feedback sent to patient's chat.");
+        } catch (e) {
+          console.error(e);
         }
-      }, [isDark]);
+      };
+
+      const generateAiSummary = async () => {
+        if (!selectedPatient) return;
+        setIsSummarizing(true);
+        setAiSummary('');
+        try {
+          const context = `
+            Patient Name: ${selectedPatient.name}
+            Last 5 Chat Messages: ${patientChat.slice(-5).map(m => m.text).join(' | ')}
+            Last 3 Journal Entries: ${patientJournals.slice(0, 3).map(j => j.text).join(' | ')}
+            Latest Sentiment Score: ${patientMetrics[0]?.score || 'N/A'}
+          `;
+
+          const apiKey = getClientGeminiKey();
+          if (!apiKey) throw new Error('Missing API Key');
+          const genAI = new GoogleGenerativeAI(apiKey);
+          const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            systemInstruction: "You are a senior clinical psychiatrist providing a professional summary for a colleague."
+          });
+
+          const prompt = `Generate a professional clinical summary for a mental health provider based on these logs: ${context}. 
+          Focus on sentiment trends, risk factors (if any), and overall progress. Keep it concise, medical, and actionable.`;
+
+          const result = await model.generateContent(prompt);
+          setAiSummary(result.response.text());
+        } catch (e) {
+          setAiSummary("Failed to generate summary. Please check logs.");
+        } finally {
+          setIsSummarizing(false);
+        }
+      };
+
+      const getMoodTrend = (metrics) => {
+        if (!metrics || metrics.length < 2) return "Stable";
+        const latest = metrics[0].score;
+        const previous = metrics[1].score;
+        if (latest > previous + 1) return "Improving ↑";
+        if (latest < previous - 1) return "Declining ↓";
+        return "Stable →";
+      };
+
+      const getLastActivity = (patientId) => {
+        // In a real app, this would be the max timestamp from chats/journals/metrics
+        return "Active Now";
+      };
+
+      return (
+        <div className="flex h-screen bg-[#f8fafc] overflow-hidden" dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
+          {/* Sidebar */}
+          <div className={`w-80 bg-[#0f172a] m-4 rounded-[2.5rem] flex flex-col shadow-2xl overflow-hidden ${i18n.language === 'ar' ? 'ms-4' : 'me-4'}`}>
+            <div className="p-8">
+              <div className="flex items-center gap-3 mb-10">
+                <div className="w-10 h-10 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-bold text-xl shadow-lg">B</div>
+                <h1 className="font-serif-logo text-white text-xl tracking-tight">MindSync</h1>
+              </div>
+              <div className="bg-white/5 rounded-3xl p-5 border border-white/10 mb-8">
+                <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-1">{t('doctor.portal')}</p>
+                <p className="text-white font-bold truncate">{doctorUser.doctorName || 'Dr. Medical'}</p>
+                <p className="text-[10px] text-white/40 mt-1 font-mono">ID: {doctorUser.doctorId}</p>
+              </div>
+              <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6 px-2">{t('doctor.directory')}</h2>
+              <div className="space-y-3 max-h-[calc(100vh-400px)] overflow-y-auto custom-scrollbar pr-2">
+                {patients.map(p => (
+                  <button key={p.id} onClick={() => setSelectedPatient(p)} className={`w-full p-4 rounded-3xl flex items-center gap-3 transition-all ${selectedPatient?.id === p.id ? 'bg-blue-600 text-white shadow-lg scale-[1.02]' : 'bg-white/5 text-white/60 hover:bg-white/10'}`}>
+                    <div className={`w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center font-bold ${selectedPatient?.id === p.id ? 'bg-white text-blue-600' : 'bg-white/10'}`}>{p.name?.charAt(0)}</div>
+                    <div className="text-left flex-1 min-w-0">
+                      <p className="font-bold text-sm truncate">{p.name}</p>
+                      <p className={`text-[8px] font-black uppercase mt-1 ${selectedPatient?.id === p.id ? 'text-blue-200' : 'text-slate-500'}`}>{t('doctor.score', { score: p.sentimentScore || '8' })}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button onClick={onLogout} className="mt-auto m-6 p-4 rounded-2xl bg-white/5 text-white/40 hover:text-white transition-all flex items-center gap-3 text-sm font-bold">
+              <LogOut size={16} /> {t('doctor.session_end')}
+            </button>
+          </div>
+
+          {/* Main Viewport */}
+          <div className="flex-1 flex flex-col p-4 overflow-hidden">
+            <div className="flex-1 bg-white rounded-[3rem] shadow-xl border border-slate-100 overflow-hidden flex flex-col relative">
+              {selectedPatient ? (
+                <div className="flex-1 overflow-y-auto custom-scrollbar bg-[#f8fafc]">
+                  {/* Sticky Header */}
+                  <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-xl border-b border-slate-100 px-10 py-6 flex justify-between items-center">
+                    <div className="flex items-center gap-6">
+                      <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center text-xl font-bold text-slate-800 border-2 border-white shadow-md">{selectedPatient.name?.charAt(0)}</div>
+                      <div>
+                        <h3 className="text-2xl font-bold text-[#1e293b]">{selectedPatient.name}</h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                          <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Live Sync Active</p>
+                        </div>
+                      </div>
+                    </div>
+                    <button onClick={generateAiSummary} disabled={isSummarizing} className="bg-[#0f172a] text-white px-6 py-3 rounded-2xl text-sm font-bold flex items-center gap-3 hover:scale-105 transition-all shadow-lg disabled:opacity-50">
+                      <Activity size={18} /> {isSummarizing ? t('doctor.analyzing') : t('doctor.summary')}
+                    </button>
+                  </div>
+
+                  {/* Vertically Stacked Sections */}
+                  <div className="p-10 space-y-12">
+                    {aiSummary && (
+                      <div className="bg-blue-600 p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
+                        <div className="relative z-10">
+                          <p className="text-[10px] font-black uppercase tracking-widest mb-3 opacity-60">{t('doctor.narrative')}</p>
+                          <p className="text-lg font-medium italic leading-relaxed">"{aiSummary}"</p>
+                        </div>
+                        <div className="absolute right-0 bottom-0 w-32 h-32 bg-white/10 rounded-full blur-3xl"></div>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                      {/* Chat Feed */}
+                      <div className="xl:col-span-2 bg-white rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col h-[550px] overflow-hidden">
+                        <div className="p-6 border-b border-slate-50 bg-slate-50/50 flex justify-between items-center">
+                          <div className="flex flex-col gap-1">
+                            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-2"><MessageCircle size={14} className="text-blue-500" /> {t('doctor.live_feed')}</h4>
+                            {liveSentimentNote && (
+                              <motion.p initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="text-[11px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100 flex items-center gap-2">
+                                <Activity size={12} className="animate-pulse" /> {t('doctor.ai_insight', { text: liveSentimentNote })}
+                              </motion.p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            {isAnalyzingLive && <span className="text-[10px] font-black text-slate-400 animate-pulse uppercase tracking-tighter">{t('doctor.insight_loading')}</span>}
+                            {patientTyping && <span className="text-[10px] font-bold text-blue-500 animate-pulse italic">{t('doctor.patient_active')}</span>}
+                          </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-8 space-y-4 custom-scrollbar">
+                          {patientChat.map((m, idx) => (
+                            <div key={m.id || idx} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                              <div className={`max-w-[80%] p-5 rounded-[2rem] text-sm ${m.sender === 'user' ? 'bg-slate-100 text-slate-800 rounded-tr-none' : 'bg-blue-600 text-white rounded-tl-none shadow-md'}`}>{m.text}</div>
+                            </div>
+                          ))}
+                          {patientChat.length === 0 && <p className="text-center text-slate-300 py-10 italic">No chat history.</p>}
+                        </div>
+                        <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
+                          <input type="text" value={feedback} onChange={e => setFeedback(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendFeedback()} className="flex-1 bg-white border border-slate-200 rounded-2xl px-6 py-4 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all shadow-sm" placeholder={t('doctor.reply_placeholder')} />
+                          <button onClick={sendFeedback} className="w-14 h-14 bg-blue-600 text-white rounded-2xl flex items-center justify-center hover:bg-blue-700 shadow-xl transition-all"><Send size={20} /></button>
+                        </div>
+                      </div>
+
+                      {/* Emotional State Gauge */}
+                      <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm p-10 flex flex-col items-center justify-center text-center">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-10">{t('doctor.internal_state')}</h4>
+                        <div className="relative w-48 h-48 flex items-center justify-center">
+                          <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
+                            <circle cx="50" cy="50" r="44" stroke="#f1f5f9" strokeWidth="8" fill="none" />
+                            <motion.circle cx="50" cy="50" r="44" stroke={(patientMetrics[0]?.score || 5) <= 3 ? '#ef4444' : '#3b82f6'} strokeWidth="8" fill="none" strokeDasharray="276.46" initial={{ strokeDashoffset: 276.46 }} animate={{ strokeDashoffset: 276.46 - (276.46 * (patientMetrics[0]?.score || 5)) / 10 }} transition={{ duration: 1.5, ease: "easeOut" }} strokeLinecap="round" />
+                          </svg>
+                          <div className="absolute text-center">
+                            <p className="text-5xl font-black text-slate-800">{patientMetrics[0]?.score || '5'}</p>
+                            <p className="text-[10px] font-black text-slate-400 uppercase">Score</p>
+                          </div>
+                        </div>
+                        <p className={`mt-8 text-xs font-bold ${(patientMetrics[0]?.score || 5) <= 3 ? 'text-red-500' : 'text-blue-500'}`}>
+                          {(patientMetrics[0]?.score || 5) <= 3 ? t('doctor.clinical_risk') : t('doctor.stable')}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Journals Section (Deep Stacked) */}
+                    <div className="space-y-6 pb-20">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] flex items-center gap-2"><Book size={16} className="text-blue-500" /> {t('doctor.narratives')}</h4>
+                        {hasMoodDecline && <span className="bg-red-500 text-white text-[9px] font-black px-3 py-1.5 rounded-full animate-pulse shadow-lg">{t('doctor.alert')}</span>}
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {patientJournals.map(j => (
+                          <div key={j.id} onClick={() => setSelectedJournal(j)} className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-md transition-all cursor-pointer group">
+                            <div className="flex justify-between mb-4">
+                              <span className="text-[9px] font-black text-blue-500 uppercase">{j.timestamp?.toDate ? j.timestamp.toDate().toLocaleDateString() : t('doctor.recent')}</span>
+                              <div className={`w-3 h-3 rounded-full ${j.sentimentScore <= 3 ? 'bg-red-500' : 'bg-green-500'}`}></div>
+                            </div>
+                            <p className="text-slate-600 text-sm italic mb-6 leading-relaxed line-clamp-3">"{j.text}"</p>
+                            <div className="pt-4 border-t border-slate-50 group-hover:border-blue-100 transition-colors">
+                              <p className="text-[9px] font-black text-slate-400 uppercase mb-1">{t('doctor.clinical_note')}</p>
+                              <p className="text-[11px] font-bold text-slate-700 leading-tight">{j.summary || t('doctor.in_progress')}</p>
+                            </div>
+                          </div>
+                        ))}
+                        {patientJournals.length === 0 && <p className="col-span-full text-center py-20 text-slate-300 font-medium italic">{t('doctor.no_journals')}</p>}
+                      </div>
+                    </div>
+
+                    {/* Journal Detail Overlay */}
+                    <AnimatePresence>
+                      {selectedJournal && (
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
+                          <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-white w-full max-w-5xl h-[80vh] rounded-[3rem] shadow-2xl flex overflow-hidden border border-white/20" dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
+                            {/* Sidebar History */}
+                            <div className="w-80 bg-slate-50 border-r border-slate-100 flex flex-col p-8">
+                              <div className="flex items-center gap-3 mb-10">
+                                <Book className="text-blue-600" size={24} />
+                                <h3 className="font-serif-logo text-xl text-slate-800">{t('doctor.history')}</h3>
+                              </div>
+                              <div className="space-y-3 overflow-y-auto custom-scrollbar flex-1">
+                                {patientJournals.map(pj => {
+                                  const date = pj.timestamp?.toDate ? pj.timestamp.toDate() : new Date();
+                                  const isSelected = selectedJournal.id === pj.id;
+                                  return (
+                                    <button key={pj.id} onClick={() => setSelectedJournal(pj)} className={`w-full text-left p-4 rounded-2xl transition-all ${isSelected ? 'bg-blue-600 text-white shadow-lg' : 'bg-white border border-slate-100 hover:border-blue-200'}`}>
+                                      <p className={`text-[9px] font-black uppercase mb-1 ${isSelected ? 'text-blue-100' : 'text-blue-500'}`}>{date.toLocaleDateString()}</p>
+                                      <p className={`text-xs font-bold truncate ${isSelected ? 'text-white' : 'text-slate-700'}`}>{pj.summary || 'Untitled Entry'}</p>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <button onClick={() => setSelectedJournal(null)} className="mt-6 w-full py-4 rounded-2xl bg-slate-800 text-white text-sm font-bold shadow-lg hover:bg-black transition-all">{t('doctor.close')}</button>
+                            </div>
+
+                            {/* Content Area */}
+                            <div className="flex-1 flex flex-col min-w-0">
+                              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-md">
+                                <div>
+                                  <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1">{t('doctor.detailed')}</h4>
+                                  <p className="text-xl font-bold text-slate-800">{selectedJournal.timestamp?.toDate ? selectedJournal.timestamp.toDate().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : 'Unknown Date'}</p>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-100">
+                                    <p className="text-[9px] font-black text-blue-400 uppercase">{t('doctor.sentiment')}</p>
+                                    <p className="text-xs font-bold text-blue-600">{t('doctor.stable_analysis')}</p>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className={`flex-1 overflow-y-auto p-12 bg-[#fdfaf0] relative ${i18n.language === 'ar' ? 'border-e-[4px]' : 'border-s-[4px]'} border-red-200`} style={{ backgroundImage: 'repeating-linear-gradient(transparent, transparent 39px, #e2e8f0 39px, #e2e8f0 40px)', lineHeight: '40px' }}>
+                                <div className={`absolute top-0 bottom-0 ${i18n.language === 'ar' ? 'end-10' : 'start-10'} w-[1px] bg-red-200 opacity-50`}></div>
+                                <p className="text-xl font-serif-logo text-slate-700 leading-[40px] relative z-10 whitespace-pre-wrap px-8">
+                                  {selectedJournal.text}
+                                </p>
+                              </div>
+                              <div className="p-8 bg-blue-600 text-white">
+                                <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-2">{t('doctor.clinical_summary')}</p>
+                                <p className="text-sm font-medium italic">"{selectedJournal.summary || t('doctor.no_analysis')}"</p>
+                              </div>
+                            </div>
+                          </motion.div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-center p-20 bg-slate-50/50">
+                  <div className="w-40 h-40 bg-white rounded-full flex items-center justify-center text-7xl mb-8 shadow-xl opacity-40 grayscale animate-pulse">🏥</div>
+                  <h3 className="text-3xl font-serif-logo text-slate-300 mb-4">{t('doctor.select_patient')}</h3>
+                  <p className="text-slate-500 font-medium max-w-sm leading-relaxed">{t('doctor.select_desc')}</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* New Patient Toast */}
+          <AnimatePresence>
+            {showNewPatientToast && (
+              <motion.div
+                initial={{ opacity: 0, y: 50 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 50 }}
+                className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] bg-[#1E293B] text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-4 border border-white/10"
+              >
+                <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center shadow-lg animate-bounce">✓</div>
+                <div>
+                  <p className="font-bold text-sm">{t('doctor.link_toast')}</p>
+                  <p className="text-[10px] text-white/50 uppercase font-black">{t('doctor.link_desc')}</p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      );
+    };
+
+    // --- Main App Component ---
+    const App = () => {
       const { i18n } = useTranslation();
       const [user, setUser] = useState(null);
       const [view, setView] = useState('auth');
@@ -1659,8 +2761,9 @@
       useEffect(() => {
         const saved = localStorage.getItem('breathe_user') || sessionStorage.getItem('breathe_user');
         if (saved) {
-          setUser(JSON.parse(saved));
-          setView('dashboard');
+          const parsed = JSON.parse(saved);
+          setUser(parsed);
+          setView(parsed.role === 'doctor' ? 'doctor_dashboard' : 'dashboard');
         }
         setIsInitializing(false);
       }, []);
@@ -1672,17 +2775,18 @@
       };
 
       const handleAuth = (authData) => {
+        const uWithLang = { ...authData, lang: i18n.language };
         if (authData.remember) {
-          localStorage.setItem('breathe_user', JSON.stringify(authData));
+          localStorage.setItem('breathe_user', JSON.stringify(uWithLang));
         } else {
-          sessionStorage.setItem('breathe_user', JSON.stringify(authData));
+          sessionStorage.setItem('breathe_user', JSON.stringify(uWithLang));
         }
         if (authData.isNew) {
-          setUser(authData);
+          setUser(uWithLang);
           setView('onboarding');
         } else {
-          setUser(authData);
-          setView('dashboard');
+          setUser(uWithLang);
+          setView(authData.role === 'doctor' ? 'doctor_dashboard' : 'dashboard');
         }
       };
 
@@ -1700,7 +2804,7 @@
         <div dir={lang === 'ar' ? 'rtl' : 'ltr'} style={{ fontFamily: lang === 'ar' ? 'Cairo, sans-serif' : 'Outfit, sans-serif' }} className="min-h-screen">
           <button
             onClick={toggleLanguage}
-            className="fixed top-4 end-4 z-50 glass px-4 py-2 rounded-full text-xs font-bold text-[#1e293b] dark:text-slate-100 shadow-sm hover:bg-white/40 dark:bg-slate-800/40 transition"
+            className="fixed top-4 end-4 z-50 glass px-4 py-2 rounded-full text-xs font-bold text-[#1e293b] shadow-sm hover:bg-white/40 transition"
           >
             {lang === 'en' ? 'عربي' : 'EN'}
           </button>
@@ -1710,7 +2814,7 @@
             ) : view === 'onboarding' ? (
               <Onboarding key="onboarding" tempUser={user} onComplete={(u) => { setUser(u); setView('dashboard'); }} />
             ) : view === 'dashboard' ? (
-              <Dashboard key="dashboard" user={user} setView={setView} onLogout={logout} isDark={isDark} toggleTheme={() => setIsDark(!isDark)} />
+              <Dashboard key="dashboard" user={user} setView={setView} onLogout={logout} />
             ) : view === 'chat' ? (
               <ChatInterface key="chat" onBack={() => setView('dashboard')} user={user} onSupport={() => setView('support')} lang={lang} />
             ) : view === 'panic' ? (
@@ -1721,6 +2825,8 @@
               <Journal key="journal" onBack={() => setView('dashboard')} user={user} setUser={setUser} onSupport={() => setView('support')} />
             ) : view === 'support' ? (
               <SupportPage key="support" onBack={() => setView('dashboard')} />
+            ) : view === 'doctor_dashboard' ? (
+              <DoctorDashboard key="doctor" user={user} onLogout={logout} />
             ) : null}
           </AnimatePresence>
         </div>
