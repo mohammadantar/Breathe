@@ -2781,11 +2781,11 @@
         } else {
           sessionStorage.setItem('breathe_user', JSON.stringify(uWithLang));
         }
+        
+        setUser(uWithLang);
         if (authData.isNew) {
-          setUser(uWithLang);
           setView('onboarding');
         } else {
-          setUser(uWithLang);
           setView(authData.role === 'doctor' ? 'doctor_dashboard' : 'dashboard');
         }
       };
@@ -2797,6 +2797,19 @@
         setUser(null);
         setView('auth');
       };
+
+      useEffect(() => {
+        if (!user || isInitializing) return;
+        
+        const patientViews = ['dashboard', 'chat', 'panic', 'mood', 'journal'];
+        const doctorViews = ['doctor_dashboard'];
+        
+        if (user.role === 'doctor' && patientViews.includes(view)) {
+          setView('doctor_dashboard');
+        } else if (user.role !== 'doctor' && doctorViews.includes(view)) {
+          setView('dashboard');
+        }
+      }, [user, view, isInitializing]);
 
       if (isInitializing) return null;
 
@@ -2812,7 +2825,7 @@
             {view === 'auth' ? (
               <Auth key="auth" onLogin={handleAuth} />
             ) : view === 'onboarding' ? (
-              <Onboarding key="onboarding" tempUser={user} onComplete={(u) => { setUser(u); setView('dashboard'); }} />
+              <Onboarding key="onboarding" tempUser={user} onComplete={(u) => { setUser(u); setView(u.role === 'doctor' ? 'doctor_dashboard' : 'dashboard'); }} />
             ) : view === 'dashboard' ? (
               <Dashboard key="dashboard" user={user} setView={setView} onLogout={logout} />
             ) : view === 'chat' ? (
@@ -2824,7 +2837,7 @@
             ) : view === 'journal' ? (
               <Journal key="journal" onBack={() => setView('dashboard')} user={user} setUser={setUser} onSupport={() => setView('support')} />
             ) : view === 'support' ? (
-              <SupportPage key="support" onBack={() => setView('dashboard')} />
+              <SupportPage key="support" onBack={() => setView(user?.role === 'doctor' ? 'doctor_dashboard' : 'dashboard')} />
             ) : view === 'doctor_dashboard' ? (
               <DoctorDashboard key="doctor" user={user} onLogout={logout} />
             ) : null}
