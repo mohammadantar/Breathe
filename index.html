@@ -5,6 +5,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Breathe - Mental Health Space</title>
+  <script>
+    // Global error logger for mobile debugging
+    window.onerror = function(msg, url, line, col, error) {
+      const errorDiv = document.createElement('div');
+      errorDiv.style.position = 'fixed';
+      errorDiv.style.top = '0';
+      errorDiv.style.left = '0';
+      errorDiv.style.width = '100%';
+      errorDiv.style.background = 'red';
+      errorDiv.style.color = 'white';
+      errorDiv.style.padding = '10px';
+      errorDiv.style.zIndex = '9999';
+      errorDiv.style.fontSize = '12px';
+      errorDiv.innerHTML = 'Error: ' + msg + '<br>Line: ' + line + '<br>URL: ' + url;
+      document.body.appendChild(errorDiv);
+      return false;
+    };
+  </script>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%23A8D1E7'/%3E%3Ctext x='50' y='70' font-family='serif' font-size='70' font-weight='bold' fill='white' text-anchor='middle'%3EB%3C/text%3E%3Cpath d='M10 55 Q 30 45, 50 55 T 90 55' stroke='white' stroke-width='4' fill='none'/%3E%3Cpath d='M10 65 Q 30 55, 50 65 T 90 65' stroke='white' stroke-width='4' fill='none' opacity='0.6'/%3E%3C/svg%3E">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -294,7 +312,7 @@
         font-size: 1.25rem !important;
       }
 
-      .dashboard-card .text-[15px] {
+      .dashboard-card .text-sm-custom {
         font-size: 13px !important;
       }
 
@@ -357,8 +375,9 @@
   {
     "imports": {
       "react": "https://esm.sh/react@18.2.0",
+      "react-dom": "https://esm.sh/react-dom@18.2.0",
       "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
-      "framer-motion": "https://esm.sh/framer-motion@10.16.4?deps=react@18.2.0,react-dom@18.2.0",
+      "framer-motion": "https://esm.sh/framer-motion@10.16.4",
       "lucide-react": "https://esm.sh/lucide-react@0.292.0?deps=react@18.2.0",
       "i18next": "https://esm.sh/i18next@23.7.1",
       "react-i18next": "https://esm.sh/react-i18next@13.5.0?deps=react@18.2.0,i18next@23.7.1",
@@ -373,6 +392,15 @@
 </head>
 
 <body class="min-h-screen">
+  <div id="loading-screen" style="position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:#f8fafc; z-index:9998; font-family:sans-serif;">
+    <div style="text-align:center;">
+      <div style="width:40px; height:40px; border:4px solid #3b82f6; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 10px;"></div>
+      <p style="color:#64748b; font-size:14px;">Breathe is preparing your space...</p>
+    </div>
+    <style>
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </div>
   <div id="root"></div>
 
   <!-- Inject Vite's .env variables into the global window scope so Babel can read it -->
@@ -382,11 +410,13 @@
     window.__FIREBASE_AUTH_DOMAIN__ = "%VITE_FIREBASE_AUTH_DOMAIN%";
   </script>
 
-  <!-- Using data-type="module" so babel handles the module imports from esm.sh properly -->
   <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useRef, useMemo } from 'react';
+    import React, { useState, useEffect, useMemo, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
     import { motion, AnimatePresence } from 'framer-motion';
+    
+    // Hide loading screen when app starts
+    document.getElementById('loading-screen').style.display = 'none';
     import { Heart, MessageCircle, Book, Activity, ArrowLeft, Send, Phone, Info, HelpCircle, LogOut, Sun, Moon, ShieldCheck, Check, Lock } from 'lucide-react';
     import i18n from 'i18next';
     import { useTranslation, initReactI18next } from 'react-i18next';
@@ -1291,7 +1321,7 @@
                   </div>
                   <div className="flex flex-col h-full flex-1">
                     <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.journal_title')}</span>
-                    <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.journal_desc')}</span>
+                    <span className="text-sm-custom font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.journal_desc')}</span>
                     <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
                       <p className="font-bold text-gray-900 dark:text-white mb-2">Recent Entries</p>
                       <p>Write out or your mind</p>
@@ -1316,7 +1346,7 @@
                   </div>
                   <div className="flex flex-col h-full flex-1">
                     <span className="font-serif-logo text-[#0f172a] dark:text-white text-[1.7rem] mb-2 leading-tight">{t('dashboard.panic_title')}</span>
-                    <span className="text-[15px] font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.panic_desc')}</span>
+                    <span className="text-sm-custom font-medium text-gray-800 dark:text-slate-200 mb-4">{t('dashboard.panic_desc')}</span>
                     <div className="space-y-1 text-sm text-gray-600 dark:text-slate-400 mb-6 font-medium">
                       <p className="font-bold text-gray-900 dark:text-white mb-2">Breathing Guide</p>
                       <p>Immediate calming tools</p>
