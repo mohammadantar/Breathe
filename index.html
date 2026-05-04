@@ -412,36 +412,12 @@
   </script>
 
   <script type="text/babel" data-type="module">
-    const { useState, useEffect, useMemo, useRef } = React;
+    import React, { useState, useEffect, useMemo, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
     import { motion, AnimatePresence } from 'framer-motion';
     
     // Hide loading screen when app starts
-    const loadingScreen = document.getElementById('loading-screen');
-    if (loadingScreen) loadingScreen.style.display = 'none';
-
-    // Safe Storage Fallback for browsers that block localStorage
-    const storageFallback = {};
-    const safeStorage = (type = 'local') => {
-      try {
-        const s = window[type + 'Storage'];
-        s.setItem('__test__', '1');
-        s.removeItem('__test__');
-        return s;
-      } catch (e) {
-        console.warn(`Storage ${type} blocked, using memory fallback`);
-        return {
-          getItem: (k) => storageFallback[k] || null,
-          setItem: (k, v) => { storageFallback[k] = v; },
-          removeItem: (k) => { delete storageFallback[k]; },
-          clear: () => { Object.keys(storageFallback).forEach(k => delete storageFallback[k]); }
-        };
-      }
-    };
-
-    const localS = safeStorage('local');
-    const sessionS = safeStorage('session');
-
+    document.getElementById('loading-screen').style.display = 'none';
     import { Heart, MessageCircle, Book, Activity, ArrowLeft, Send, Phone, Info, HelpCircle, LogOut, Sun, Moon, ShieldCheck, Check, Lock } from 'lucide-react';
     import i18n from 'i18next';
     import { useTranslation, initReactI18next } from 'react-i18next';
@@ -467,7 +443,7 @@
       where: (field, op, val) => ({ field, op, val }),
       orderBy: (field, dir) => ({ field, dir, isSort: true }),
       getDocs: async (q) => {
-        const table = JSON.parse(localS.getItem(`mock_fs_${q.col}`) || '[]');
+        const table = JSON.parse(localStorage.getItem(`mock_fs_${q.col}`) || '[]');
         let data = [...table];
         if (q.constraints) {
           q.constraints.forEach(c => {
@@ -508,25 +484,25 @@
         return () => clearInterval(interval);
       },
       addDoc: async (col, data) => {
-        const table = JSON.parse(localS.getItem(`mock_fs_${col}`) || '[]');
+        const table = JSON.parse(localStorage.getItem(`mock_fs_${col}`) || '[]');
         const newDoc = { ...data, id: Date.now().toString(), createdAt: new Date() };
         table.push(newDoc);
-        localS.setItem(`mock_fs_${col}`, JSON.stringify(table));
+        localStorage.setItem(`mock_fs_${col}`, JSON.stringify(table));
         return { id: newDoc.id };
       },
       setDoc: async (docRef, data) => {
-        const table = JSON.parse(localS.getItem(`mock_fs_${docRef.col}`) || '[]');
+        const table = JSON.parse(localStorage.getItem(`mock_fs_${docRef.col}`) || '[]');
         const idx = table.findIndex(item => item.id === docRef.id || item.uid === docRef.id);
         if (idx > -1) table[idx] = { ...table[idx], ...data };
         else table.push({ ...data, id: docRef.id });
-        localS.setItem(`mock_fs_${docRef.col}`, JSON.stringify(table));
+        localStorage.setItem(`mock_fs_${docRef.col}`, JSON.stringify(table));
       },
       updateDoc: async (docRef, data) => {
-        const table = JSON.parse(localS.getItem(`mock_fs_${docRef.col}`) || '[]');
+        const table = JSON.parse(localStorage.getItem(`mock_fs_${docRef.col}`) || '[]');
         const idx = table.findIndex(item => item.id === docRef.id || item.uid === docRef.id);
         if (idx > -1) {
           table[idx] = { ...table[idx], ...data };
-          localS.setItem(`mock_fs_${docRef.col}`, JSON.stringify(table));
+          localStorage.setItem(`mock_fs_${docRef.col}`, JSON.stringify(table));
         }
       }
     };
@@ -737,12 +713,12 @@
         if (!email || !password) { setError(t('auth.error_empty')); return; }
 
         // Check Mock DB (breathe_users_db)
-        const usersDbStr = localS.getItem('breathe_users_db');
+        const usersDbStr = localStorage.getItem('breathe_users_db');
         const usersDb = usersDbStr ? JSON.parse(usersDbStr) : [];
         let existingUser = usersDb.find(u => u.email === email);
 
         if (!existingUser) {
-          const legacyStr = localS.getItem('breathe_user');
+          const legacyStr = localStorage.getItem('breathe_user');
           if (legacyStr) {
             const legacyUser = JSON.parse(legacyStr);
             if (legacyUser.email === email) existingUser = legacyUser;
@@ -846,17 +822,17 @@
 
       const verifyOtp = () => {
         if (otpInput === expectedOtp) {
-          const usersDbStr = localS.getItem('breathe_users_db');
+          const usersDbStr = localStorage.getItem('breathe_users_db');
           const usersDb = usersDbStr ? JSON.parse(usersDbStr) : [];
           let existingUser = usersDb.find(u => u.email === pendingGoogleUser.email);
 
           if (!existingUser) {
             existingUser = { ...pendingGoogleUser, isNew: false, id: pendingGoogleUser.uid };
             usersDb.push(existingUser);
-            localS.setItem('breathe_users_db', JSON.stringify(usersDb));
+            localStorage.setItem('breathe_users_db', JSON.stringify(usersDb));
           } else {
             existingUser.photoURL = pendingGoogleUser.photoURL;
-            localS.setItem('breathe_users_db', JSON.stringify(usersDb));
+            localStorage.setItem('breathe_users_db', JSON.stringify(usersDb));
           }
           onLogin({ ...existingUser, remember: rememberMe, isNew: false });
         } else {
@@ -1080,16 +1056,16 @@
         }
 
         // Save to Mock DB array
-        const usersDbStr = localS.getItem('breathe_users_db');
+        const usersDbStr = localStorage.getItem('breathe_users_db');
         const usersDb = usersDbStr ? JSON.parse(usersDbStr) : [];
         usersDb.push(user);
-        localS.setItem('breathe_users_db', JSON.stringify(usersDb));
+        localStorage.setItem('breathe_users_db', JSON.stringify(usersDb));
 
         // Save session
         if (tempUser.remember) {
-          localS.setItem('breathe_user', JSON.stringify(user));
+          localStorage.setItem('breathe_user', JSON.stringify(user));
         } else {
-          sessionS.setItem('breathe_user', JSON.stringify(user));
+          sessionStorage.setItem('breathe_user', JSON.stringify(user));
         }
         onComplete(user);
       };
@@ -1257,7 +1233,7 @@
             }
 
             // Update Local
-            localS.setItem('breathe_user', JSON.stringify(updatedUser));
+            localStorage.setItem('breathe_user', JSON.stringify(updatedUser));
             setDoctorInfo(doctorData);
             setLinkSuccess(true);
           }
@@ -1274,7 +1250,7 @@
         try {
           await fs_updateDoc(fs_doc(db_fs, "users", user.id), { allowDoctorAccess: val });
           const updatedUser = { ...user, allowDoctorAccess: val };
-          localS.setItem('breathe_user', JSON.stringify(updatedUser));
+          localStorage.setItem('breathe_user', JSON.stringify(updatedUser));
           // Note: App state 'user' should be updated by parent if we want immediate reactivity, 
           // but for now we'll assume it's updated on next reload or we can force it.
           window.dispatchEvent(new Event('storage')); // Simple hack to trigger re-renders if needed
@@ -1533,7 +1509,7 @@
       const STORAGE_KEY = 'breathe_panic_progress';
 
       const [step, setStep] = useState(() => {
-        const saved = localS.getItem(STORAGE_KEY);
+        const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed.date === new Date().toDateString() && parsed.step > 0) {
@@ -1551,7 +1527,7 @@
 
       // Persist progress
       useEffect(() => {
-        localS.setItem(STORAGE_KEY, JSON.stringify({ step, date: new Date().toDateString() }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ step, date: new Date().toDateString() }));
       }, [step]);
 
       // Breathing timer (cards 4-6, steps 3-5)
@@ -1568,7 +1544,7 @@
       const goPrev = () => { setDoneConfirmed(false); setStep(s => Math.max(s - 1, 0)); };
 
       const handleFinish = () => {
-        localS.removeItem(STORAGE_KEY);
+        localStorage.removeItem(STORAGE_KEY);
         if (onPanicComplete) onPanicComplete(checkinScore);
         onBack();
       };
@@ -2203,7 +2179,7 @@
       const [selectedColor, setSelectedColor] = useState('good');
 
       useEffect(() => {
-        const saved = localS.getItem('breathe_mood_grid');
+        const saved = localStorage.getItem('breathe_mood_grid');
         if (saved) setGrid(JSON.parse(saved));
       }, []);
 
@@ -2213,7 +2189,7 @@
         const newGrid = [...grid];
         newGrid[index] = selectedColor;
         setGrid(newGrid);
-        localS.setItem('breathe_mood_grid', JSON.stringify(newGrid));
+        localStorage.setItem('breathe_mood_grid', JSON.stringify(newGrid));
       };
 
       return (
@@ -2344,7 +2320,7 @@
         if (!user.journalPin) {
           const updatedUser = { ...user, journalPin: pinInput };
           setUser(updatedUser);
-          localS.setItem('breathe_user', JSON.stringify(updatedUser));
+          localStorage.setItem('breathe_user', JSON.stringify(updatedUser));
           setIsUnlocked(true);
         } else if (pinInput === user.journalPin) {
           setIsUnlocked(true);
@@ -2356,7 +2332,7 @@
       const handleSave = async () => {
         const updatedUser = { ...user, journalEntry: entry };
         setUser(updatedUser);
-        localS.setItem('breathe_user', JSON.stringify(updatedUser));
+        localStorage.setItem('breathe_user', JSON.stringify(updatedUser));
 
         // Save to Firestore
         if (db_fs && user?.id) {
@@ -2380,7 +2356,7 @@
 
           const updatedUser = { ...user, journalMemory: summary, journalEntry: entry };
           setUser(updatedUser);
-          localS.setItem('breathe_user', JSON.stringify(updatedUser));
+          localStorage.setItem('breathe_user', JSON.stringify(updatedUser));
           alert("Analysis Saved: " + summary);
         } catch (e) {
           console.error(e);
@@ -2952,7 +2928,7 @@
       const [isInitializing, setIsInitializing] = useState(true);
 
       useEffect(() => {
-        const saved = localS.getItem('breathe_user') || sessionS.getItem('breathe_user');
+        const saved = localStorage.getItem('breathe_user') || sessionStorage.getItem('breathe_user');
         if (saved) {
           const parsed = JSON.parse(saved);
           setUser(parsed);
@@ -2970,9 +2946,9 @@
       const handleAuth = (authData) => {
         const uWithLang = { ...authData, lang: i18n.language };
         if (authData.remember) {
-          localS.setItem('breathe_user', JSON.stringify(uWithLang));
+          localStorage.setItem('breathe_user', JSON.stringify(uWithLang));
         } else {
-          sessionS.setItem('breathe_user', JSON.stringify(uWithLang));
+          sessionStorage.setItem('breathe_user', JSON.stringify(uWithLang));
         }
         
         setUser(uWithLang);
@@ -2985,8 +2961,8 @@
 
       const logout = () => {
         // Clear session so the next person has to log in again
-        localS.removeItem('breathe_user');
-        sessionS.removeItem('breathe_user');
+        localStorage.removeItem('breathe_user');
+        sessionStorage.removeItem('breathe_user');
         setUser(null);
         setView('auth');
       };
@@ -3024,7 +3000,7 @@
             ) : view === 'chat' ? (
               <ChatInterface key="chat" onBack={() => setView('dashboard')} user={user} onSupport={() => setView('support')} lang={lang} />
             ) : view === 'panic' ? (
-              <PanicHelp key="panic" onBack={() => setView('dashboard')} user={user} onSupport={() => setView('support')} onPanicComplete={(score) => { const u = { ...user, panicScore: score }; setUser(u); localS.setItem('breathe_user', JSON.stringify(u)); setView('dashboard'); }} />
+              <PanicHelp key="panic" onBack={() => setView('dashboard')} user={user} onSupport={() => setView('support')} onPanicComplete={(score) => { const u = { ...user, panicScore: score }; setUser(u); localStorage.setItem('breathe_user', JSON.stringify(u)); setView('dashboard'); }} />
             ) : view === 'mood' ? (
               <MoodTracker key="mood" onBack={() => setView('dashboard')} onSupport={() => setView('support')} />
             ) : view === 'journal' ? (
